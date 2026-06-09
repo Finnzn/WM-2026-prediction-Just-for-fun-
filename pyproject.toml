@@ -1,0 +1,20 @@
+[project]
+name = "worldcup-2026-predictor"
+version = "0.1.0"
+description = "Transparent local FIFA World Cup 2026 prediction system for a private game."
+requires-python = ">=3.11"
+dependencies = [
+  "pandas",
+  "numpy",
+  "requests",
+  "python-dotenv",
+  "typer",
+  "rapidfuzz",
+  "openpyxl",
+  "pytest",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+

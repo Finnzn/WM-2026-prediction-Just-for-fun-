@@ -1,0 +1,3 @@
+match_id,home_team,away_team,market_category,polymarket_event_id,polymarket_market_slug,home_outcome_token_id,draw_outcome_token_id,away_outcome_token_id,over_outcome_token_id,under_outcome_token_id,spread_team,spread_line,total_line,market_type,notes
+M001,Mexico,South Africa,moneyline,,example-mexico-south-africa-moneyline,,,,,,,,,three_way_moneyline,manual review required
+
