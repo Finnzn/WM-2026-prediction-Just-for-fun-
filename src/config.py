@@ -32,6 +32,10 @@ class Config:
 
     polymarket_gamma_base_url: str = os.getenv("POLYMARKET_GAMMA_BASE_URL", "https://gamma-api.polymarket.com")
     polymarket_clob_base_url: str = os.getenv("POLYMARKET_CLOB_BASE_URL", "https://clob.polymarket.com")
+    polymarket_worldcup_games_url: str = os.getenv(
+        "POLYMARKET_WORLDCUP_GAMES_URL",
+        "https://polymarket.com/sports/world-cup/games",
+    )
     use_polymarket: bool = _bool("USE_POLYMARKET", True)
     polymarket_match_confidence_threshold: float = _float("POLYMARKET_MATCH_CONFIDENCE_THRESHOLD", 0.8)
     polymarket_cache_minutes: int = _int("POLYMARKET_CACHE_MINUTES", 10)
@@ -44,10 +48,10 @@ class Config:
     last_24_months_weight: float = _float("LAST_24_MONTHS_WEIGHT", 1.5)
     last_48_months_weight: float = _float("LAST_48_MONTHS_WEIGHT", 1.0)
 
-    model_weight: float = _float("MODEL_WEIGHT", 0.6)
-    moneyline_market_weight: float = _float("MONEYLINE_MARKET_WEIGHT", 0.4)
-    live_model_weight: float = _float("LIVE_MODEL_WEIGHT", 0.45)
-    live_moneyline_market_weight: float = _float("LIVE_MONEYLINE_MARKET_WEIGHT", 0.55)
+    model_weight: float = _float("MODEL_WEIGHT", 0.4)
+    moneyline_market_weight: float = _float("MONEYLINE_MARKET_WEIGHT", 0.6)
+    live_model_weight: float = _float("LIVE_MODEL_WEIGHT", 0.3)
+    live_moneyline_market_weight: float = _float("LIVE_MONEYLINE_MARKET_WEIGHT", 0.7)
     spread_calibration_weight: float = _float("SPREAD_CALIBRATION_WEIGHT", 0.25)
     total_calibration_weight: float = _float("TOTAL_CALIBRATION_WEIGHT", 0.30)
     use_futures_as_team_strength: bool = _bool("USE_FUTURES_AS_TEAM_STRENGTH", False)

@@ -17,6 +17,20 @@ It does not implement gambling, trading, staking, wallet access, private keys,
 order placement, bookmaker scraping, Bet365 scraping, or authenticated market
 endpoints.
 
+Default match-probability blending is market-led:
+
+```text
+40% statistical model
+60% Polymarket moneyline
+```
+
+In live mode, the default is:
+
+```text
+30% statistical model
+70% Polymarket moneyline
+```
+
 ## Data Files
 
 The main local files are:

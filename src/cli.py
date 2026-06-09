@@ -146,6 +146,13 @@ def market_candidates_command(args: argparse.Namespace) -> int:
         return 1
     row = rows.iloc[0]
     client = PolymarketClient(cfg)
+    scraped = client.scrape_worldcup_moneyline(row["home_team"], row["away_team"], refresh=args.refresh_markets)
+    if scraped:
+        print("World Cup games page moneyline:")
+        print(f"   source={scraped['source']} confidence={scraped['confidence']:.2f}")
+        print(f"   raw={scraped['raw']}")
+        print(f"   normalized={scraped['normalized']}")
+        print("")
     candidates = client.candidates_for_match(row["home_team"], row["away_team"], row["date"], refresh=args.refresh_markets)
     if not candidates:
         print("No Polymarket candidates found or public API unavailable.")

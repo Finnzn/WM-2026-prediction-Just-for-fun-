@@ -107,30 +107,10 @@ def predict_match_row(
     market_conf = 0.0
     moneyline_used = False
     notes: list[str] = []
+    mw = 1.0 if model_weight is None else model_weight
+    kw = 0.0 if market_weight is None else market_weight
     manual_probs = None if no_markets else manual_probs_for_match(load_manual_market_probs(cfg.manual_market_probs_path), str(row["match_id"]))
-    if manual_probs:
-        market_probs = (
-            manual_probs["normalized"]["home_win"],
-            manual_probs["normalized"]["draw"],
-            manual_probs["normalized"]["away_win"],
-        )
-        mw = cfg.live_model_weight if live else cfg.model_weight
-        kw = cfg.live_moneyline_market_weight if live else cfg.moneyline_market_weight
-        if model_weight is not None:
-            mw = model_weight
-        if market_weight is not None:
-            kw = market_weight
-        blended = blend_moneyline(model_probs, market_probs, mw, kw)
-        pred["home_win_prob"], pred["draw_prob"], pred["away_win_prob"] = blended
-        market_used = True
-        moneyline_used = True
-        market_source = manual_probs["source"]
-        market_timestamp = manual_probs["updated_at"]
-        raw_prices = manual_probs["raw"]
-        normalized_market = manual_probs["normalized"]
-        market_conf = 1.0
-        notes.append("manual market probabilities used")
-    elif not no_markets and cfg.use_polymarket:
+    if not no_markets and cfg.use_polymarket:
         polymarket = PolymarketClient(cfg)
         pm = polymarket.best_moneyline_for_match(home, away, str(row.get("date", "")), refresh=refresh_markets)
         if pm:
@@ -156,13 +136,36 @@ def predict_match_row(
             normalized_market = pm["normalized"]
             market_conf = pm["confidence"]
             notes.append(f"automatic Polymarket moneyline used: {pm.get('title') or pm.get('slug')}")
-        else:
-            mw = 1.0 if model_weight is None else model_weight
-            kw = 0.0 if market_weight is None else market_weight
-            notes.append("no reliable automatic Polymarket moneyline found")
-    else:
+        elif manual_probs:
+            notes.append("automatic Polymarket unavailable; using manual fallback probabilities")
+
+    if not market_used and manual_probs:
+        market_probs = (
+            manual_probs["normalized"]["home_win"],
+            manual_probs["normalized"]["draw"],
+            manual_probs["normalized"]["away_win"],
+        )
+        mw = cfg.live_model_weight if live else cfg.model_weight
+        kw = cfg.live_moneyline_market_weight if live else cfg.moneyline_market_weight
+        if model_weight is not None:
+            mw = model_weight
+        if market_weight is not None:
+            kw = market_weight
+        blended = blend_moneyline(model_probs, market_probs, mw, kw)
+        pred["home_win_prob"], pred["draw_prob"], pred["away_win_prob"] = blended
+        market_used = True
+        moneyline_used = True
+        market_source = manual_probs["source"]
+        market_timestamp = manual_probs["updated_at"]
+        raw_prices = manual_probs["raw"]
+        normalized_market = manual_probs["normalized"]
+        market_conf = 1.0
+        notes.append("manual market probabilities used")
+    elif not market_used:
         mw = 1.0 if model_weight is None else model_weight
         kw = 0.0 if market_weight is None else market_weight
+        if not no_markets and cfg.use_polymarket:
+            notes.append("no reliable automatic Polymarket moneyline found")
     pred["confidence"] = confidence_score(
         (pred["home_win_prob"], pred["draw_prob"], pred["away_win_prob"]),
         state.team_stats.get(home, {}).get("matches", 0.0),
