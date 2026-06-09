@@ -1,0 +1,15 @@
+.DS_Store
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
+
+# Local data downloads and credentials
+kaggle.json
+world-cup_2026-schedule.csv
+world_football_elo_ratings_2026_world_cup_complete.csv
+data/*
+!data/manual/
+data/manual/*
+!data/manual/team_name_mapping.csv
