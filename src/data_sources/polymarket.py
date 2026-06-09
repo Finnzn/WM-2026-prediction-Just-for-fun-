@@ -2,17 +2,20 @@ from __future__ import annotations
 
 import json
 import re
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from html import unescape
-from pathlib import Path
+from difflib import SequenceMatcher
 from typing import Any
 
 import requests
 
 from src.config import Config
-from src.markets.classifier import MarketCandidate, score_candidate
-from src.utils import ensure_parent, normalize_probabilities, safe_float
+from src.markets.classifier import classify_market, parse_spread_line, parse_total_line
+from src.utils import normalize_probabilities, safe_float
 
+
+SPORT_HINTS = {"soccer", "football", "world cup", "fifa", "fifwc"}
+MAX_CLOB_SPREAD = 0.15
 
 TEAM_ALIASES = {
     "Bosnia and Herzegovina": ["Bosnia and Herzegovina", "Bosnia-Herzegovina", "BIH"],
@@ -63,7 +66,7 @@ TEAM_CODES = {
     "Scotland": "SCO",
     "Senegal": "SEN",
     "South Africa": "RSA",
-    "South Korea": "KR",
+    "South Korea": "KOR",
     "Spain": "ESP",
     "Sweden": "SWE",
     "Switzerland": "CHE",
@@ -75,190 +78,62 @@ TEAM_CODES = {
 }
 
 
-class PolymarketClient:
-    """Read-only public Polymarket helper. No wallet, auth, trading, or orders."""
-
-    def __init__(self, cfg: Config):
-        self.cfg = cfg
-        self.cache_path = Path("data/processed/market_cache.json")
-        self.page_cache_path = Path("data/processed/polymarket_worldcup_games_page.txt")
-
-    def _get(self, path: str, params: dict[str, Any]) -> Any:
-        url = f"{self.cfg.polymarket_gamma_base_url.rstrip('/')}/{path.lstrip('/')}"
-        response = requests.get(url, params=params, timeout=15)
-        response.raise_for_status()
-        return response.json()
-
-    def search_markets(self, query: str, refresh: bool = False) -> list[dict[str, Any]]:
-        if not refresh:
-            cached = self._read_cache(query)
-            if cached is not None:
-                return cached
-        try:
-            data = self._get("/markets", {"search": query, "limit": 25})
-        except Exception:
-            return []
-        rows = data if isinstance(data, list) else data.get("markets", data.get("data", []))
-        if isinstance(rows, list):
-            self._write_cache(query, rows)
-            return [row for row in rows if isinstance(row, dict)]
-        return []
-
-    def candidates_for_match(self, home_team: str, away_team: str, match_date: str, refresh: bool = False) -> list[MarketCandidate]:
-        queries = [
-            f"{home_team} {away_team} World Cup 2026",
-            f"{home_team} vs {away_team}",
-            f"{away_team} vs {home_team}",
-            f"FIFA World Cup {match_date}",
-        ]
-        seen: set[str] = set()
-        candidates: list[MarketCandidate] = []
-        for query in queries:
-            for raw in self.search_markets(query, refresh=refresh):
-                slug = str(raw.get("slug") or raw.get("id") or raw.get("question") or "")
-                if slug in seen:
-                    continue
-                seen.add(slug)
-                candidates.append(score_candidate(raw, home_team, away_team, match_date))
-        candidates.sort(key=lambda item: item.confidence, reverse=True)
-        return candidates
-
-    def fetch_worldcup_games_text(self, refresh: bool = False) -> str:
-        if not refresh and self.page_cache_path.exists():
-            try:
-                return self.page_cache_path.read_text()
-            except Exception:
-                pass
-        response = requests.get(self.cfg.polymarket_worldcup_games_url, timeout=20)
-        response.raise_for_status()
-        text = html_to_text(response.text)
-        ensure_parent(self.page_cache_path)
-        self.page_cache_path.write_text(text)
-        return text
-
-    def scrape_worldcup_moneyline(
-        self,
-        home_team: str,
-        away_team: str,
-        refresh: bool = False,
-    ) -> dict[str, Any] | None:
-        try:
-            text = self.fetch_worldcup_games_text(refresh=refresh)
-        except Exception:
-            return None
-        scraped = extract_worldcup_games_page_moneyline(text, home_team, away_team)
-        if not scraped:
-            return None
-        scraped["timestamp"] = datetime.now(timezone.utc).isoformat()
-        scraped["age_minutes"] = 0.0
-        scraped["confidence"] = 0.95
-        scraped["market_type"] = "three_way_moneyline"
-        scraped["source"] = "polymarket_worldcup_games_page"
-        scraped["title"] = f"{home_team} vs {away_team}"
-        scraped["slug"] = self.cfg.polymarket_worldcup_games_url
-        return scraped
-
-    def best_moneyline_for_match(
-        self,
-        home_team: str,
-        away_team: str,
-        match_date: str,
-        refresh: bool = False,
-    ) -> dict[str, Any] | None:
-        scraped = self.scrape_worldcup_moneyline(home_team, away_team, refresh=refresh)
-        if scraped:
-            return scraped
-
-        candidates = self.candidates_for_match(home_team, away_team, match_date, refresh=refresh)
-        for candidate in candidates:
-            if candidate.confidence < self.cfg.polymarket_match_confidence_threshold:
-                continue
-            if candidate.category != "moneyline" or candidate.market_type != "three_way_moneyline":
-                continue
-            extracted = extract_three_way_moneyline(candidate.raw, home_team, away_team)
-            if extracted:
-                extracted["confidence"] = candidate.confidence
-                extracted["market_type"] = candidate.market_type
-                extracted["title"] = candidate.title
-                extracted["slug"] = candidate.raw.get("slug", "")
-                extracted["timestamp"] = datetime.now(timezone.utc).isoformat()
-                extracted["age_minutes"] = 0.0
-                return extracted
-        return None
-
-    def _read_cache(self, query: str) -> list[dict[str, Any]] | None:
-        if not self.cache_path.exists():
-            return None
-        try:
-            cache = json.loads(self.cache_path.read_text())
-        except Exception:
-            return None
-        item = cache.get(query)
-        if not item:
-            return None
-        timestamp = datetime.fromisoformat(item["timestamp"])
-        age_minutes = (datetime.now(timezone.utc) - timestamp).total_seconds() / 60
-        if age_minutes > self.cfg.polymarket_cache_minutes:
-            return None
-        return item.get("data", [])
-
-    def _write_cache(self, query: str, data: list[dict[str, Any]]) -> None:
-        ensure_parent(self.cache_path)
-        try:
-            cache = json.loads(self.cache_path.read_text()) if self.cache_path.exists() else {}
-        except Exception:
-            cache = {}
-        cache[query] = {"timestamp": datetime.now(timezone.utc).isoformat(), "data": data}
-        self.cache_path.write_text(json.dumps(cache, ensure_ascii=False, indent=2))
+@dataclass
+class OutcomeToken:
+    outcome: str
+    gamma_price: float | None
+    token_id: str
+    bid: float | None = None
+    ask: float | None = None
+    midpoint: float | None = None
+    spread: float | None = None
+    last_trade_price: float | None = None
+    implied_probability: float | None = None
+    price_source: str = ""
+    book_url: str = ""
+    book_error: str = ""
 
 
-def _jsonish(value: Any) -> Any:
+@dataclass
+class PolymarketDebugCandidate:
+    event_title: str
+    event_slug: str
+    market_question: str
+    market_slug: str
+    category: str
+    market_type: str
+    fuzzy_score: float
+    reasons: list[str]
+    accepted: bool
+    rejected_reason: str
+    outcomes: list[str]
+    gamma_prices: list[float | None]
+    clob_token_ids: list[str]
+    tokens: list[OutcomeToken] = field(default_factory=list)
+    spread_line: float | None = None
+    total_line: float | None = None
+
+
+@dataclass
+class PolymarketDebugReport:
+    request_urls: list[str] = field(default_factory=list)
+    events_fetched: int = 0
+    markets_inspected: int = 0
+    tags_seen: list[str] = field(default_factory=list)
+    sports_seen: list[str] = field(default_factory=list)
+    candidates: list[PolymarketDebugCandidate] = field(default_factory=list)
+
+
+def parse_jsonish(value: Any) -> Any:
     if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return []
         try:
-            return json.loads(value)
-        except Exception:
+            return json.loads(text)
+        except json.JSONDecodeError:
             return value
     return value
-
-
-def extract_three_way_moneyline(raw: dict[str, Any], home_team: str, away_team: str) -> dict[str, Any] | None:
-    outcomes = _jsonish(raw.get("outcomes", []))
-    prices = _jsonish(raw.get("outcomePrices", raw.get("outcome_prices", [])))
-    if not isinstance(outcomes, list) or not isinstance(prices, list) or len(outcomes) != len(prices):
-        return None
-    outcome_prices: dict[str, float] = {}
-    for outcome, price in zip(outcomes, prices):
-        value = safe_float(price)
-        if value is None:
-            continue
-        text = str(outcome).strip().lower()
-        if home_team.lower() in text or text in {"home", "home win"}:
-            outcome_prices["home_win"] = value
-        elif away_team.lower() in text or text in {"away", "away win"}:
-            outcome_prices["away_win"] = value
-        elif text in {"draw", "tie"}:
-            outcome_prices["draw"] = value
-    if {"home_win", "draw", "away_win"} - set(outcome_prices):
-        return None
-    home, draw, away = normalize_probabilities([
-        outcome_prices["home_win"],
-        outcome_prices["draw"],
-        outcome_prices["away_win"],
-    ])
-    return {
-        "raw": outcome_prices,
-        "normalized": {"home_win": home, "draw": draw, "away_win": away},
-        "source": "polymarket_gamma_public",
-    }
-
-
-def html_to_text(html: str) -> str:
-    text = re.sub(r"<script\b.*?</script>", " ", html, flags=re.IGNORECASE | re.DOTALL)
-    text = re.sub(r"<style\b.*?</style>", " ", text, flags=re.IGNORECASE | re.DOTALL)
-    text = re.sub(r"<[^>]+>", " ", text)
-    text = unescape(text)
-    text = re.sub(r"\s+", " ", text)
-    return text.strip()
 
 
 def aliases_for_team(team: str) -> list[str]:
@@ -274,37 +149,470 @@ def aliases_for_team(team: str) -> list[str]:
     return deduped
 
 
-def _price_after_label(text: str, label: str) -> float | None:
-    pattern = rf"\b{re.escape(label)}\b\s+(\d+(?:\.\d+)?)¢"
-    match = re.search(pattern, text, flags=re.IGNORECASE)
-    return safe_float(match.group(1)) if match else None
+def norm(value: object) -> str:
+    text = "" if value is None else str(value)
+    return re.sub(r"[^a-z0-9]+", " ", text.lower()).strip()
 
 
-def extract_worldcup_games_page_moneyline(text: str, home_team: str, away_team: str) -> dict[str, Any] | None:
-    home_aliases = aliases_for_team(home_team)
-    away_aliases = aliases_for_team(away_team)
-    for home_alias in home_aliases:
-        for away_alias in away_aliases:
-            if home_alias.lower() not in text.lower() or away_alias.lower() not in text.lower():
+def ratio(a: str, b: str) -> float:
+    if not a or not b:
+        return 0.0
+    return SequenceMatcher(None, norm(a), norm(b)).ratio()
+
+
+def best_alias_score(team: str, text: str) -> tuple[float, str]:
+    best_score = 0.0
+    best_alias = ""
+    text_norm = norm(text)
+    for alias in aliases_for_team(team):
+        alias_norm = norm(alias)
+        if not alias_norm:
+            continue
+        if re.search(rf"\b{re.escape(alias_norm)}\b", text_norm):
+            return 1.0, alias
+        score = ratio(alias_norm, text_norm)
+        if score > best_score:
+            best_score = score
+            best_alias = alias
+    return best_score, best_alias
+
+
+def event_tags(event: dict[str, Any]) -> list[str]:
+    rows = event.get("tags") or []
+    tags: list[str] = []
+    if isinstance(rows, list):
+        for row in rows:
+            if isinstance(row, dict):
+                for key in ("label", "slug"):
+                    if row.get(key):
+                        tags.append(str(row[key]))
+            elif row:
+                tags.append(str(row))
+    return tags
+
+
+def event_looks_sport_relevant(event: dict[str, Any]) -> bool:
+    text = " ".join(
+        [
+            str(event.get("title", "")),
+            str(event.get("slug", "")),
+            " ".join(event_tags(event)),
+        ]
+    ).lower()
+    return any(hint in text for hint in SPORT_HINTS)
+
+
+def market_text(event: dict[str, Any], market: dict[str, Any]) -> str:
+    return " ".join(
+        [
+            str(event.get("title", "")),
+            str(event.get("slug", "")),
+            str(market.get("question", "")),
+            str(market.get("slug", "")),
+            str(market.get("description", "")),
+        ]
+    )
+
+
+def compact_market_text(event: dict[str, Any], market: dict[str, Any]) -> str:
+    return " ".join(
+        [
+            str(event.get("title", "")),
+            str(event.get("slug", "")),
+            str(market.get("question", "")),
+            str(market.get("slug", "")),
+        ]
+    )
+
+
+def question_matches_team_win(question: str, team: str) -> bool:
+    text = norm(question)
+    if " win " not in f" {text} ":
+        return False
+    for alias in aliases_for_team(team):
+        alias_norm = norm(alias)
+        if alias_norm and re.search(rf"\b{re.escape(alias_norm)}\b", text):
+            return True
+    return False
+
+
+def classify_match_market(event: dict[str, Any], market: dict[str, Any], home_team: str, away_team: str) -> tuple[str, str]:
+    question = str(market.get("question", ""))
+    slug = str(market.get("slug", ""))
+    text = f"{question} {slug}"
+    text_norm = norm(text)
+    if "win the 2026 fifa world cup" in text_norm or "win group" in text_norm:
+        return "futures", "futures_team"
+    if "end in a draw" in text_norm or re.search(r"\bdraw\b", text_norm):
+        return "moneyline", "binary_draw"
+    if question_matches_team_win(question, home_team):
+        return "moneyline", "binary_home_win"
+    if question_matches_team_win(question, away_team):
+        return "moneyline", "binary_away_win"
+    return classify_market(compact_market_text(event, market), parse_jsonish(market.get("outcomes", [])))
+
+
+def score_market_match(event: dict[str, Any], market: dict[str, Any], home_team: str, away_team: str, match_date: str = "") -> tuple[float, list[str]]:
+    text = market_text(event, market)
+    home_score, home_alias = best_alias_score(home_team, text)
+    away_score, away_alias = best_alias_score(away_team, text)
+    score = 0.0
+    reasons: list[str] = []
+    if home_score >= 1.0:
+        score += 0.30
+        reasons.append(f"home matched as {home_alias}")
+    else:
+        score += min(home_score, 0.60) * 0.20
+    if away_score >= 1.0:
+        score += 0.30
+        reasons.append(f"away matched as {away_alias}")
+    else:
+        score += min(away_score, 0.60) * 0.20
+    if home_score >= 1.0 and away_score >= 1.0:
+        score += 0.20
+        reasons.append("both teams matched")
+    if match_date and match_date in text:
+        score += 0.05
+        reasons.append("match date matched")
+    if event_looks_sport_relevant(event):
+        score += 0.05
+        reasons.append("event tags/title look sport relevant")
+    if bool(market.get("active")) and not bool(market.get("closed")):
+        score += 0.05
+        reasons.append("market active and open")
+    if bool(market.get("acceptingOrders", True)):
+        score += 0.03
+        reasons.append("market accepts orders")
+    return min(score, 1.0), reasons
+
+
+def extract_outcome_tokens(market: dict[str, Any]) -> tuple[list[OutcomeToken], list[str], list[float | None], list[str], str]:
+    outcomes_raw = parse_jsonish(market.get("outcomes", []))
+    prices_raw = parse_jsonish(market.get("outcomePrices", market.get("outcome_prices", [])))
+    token_ids_raw = parse_jsonish(market.get("clobTokenIds", market.get("clob_token_ids", [])))
+    if not isinstance(outcomes_raw, list):
+        return [], [], [], [], "outcomes not list"
+    if not isinstance(prices_raw, list):
+        prices_raw = []
+    if not isinstance(token_ids_raw, list):
+        return [], [str(item) for item in outcomes_raw], [], [], "clobTokenIds not list"
+    outcomes = [str(item) for item in outcomes_raw]
+    gamma_prices = [safe_float(item) for item in prices_raw]
+    token_ids = [str(item) for item in token_ids_raw]
+    if len(outcomes) != len(token_ids):
+        return [], outcomes, gamma_prices, token_ids, f"len(outcomes)={len(outcomes)} != len(clobTokenIds)={len(token_ids)}"
+    while len(gamma_prices) < len(outcomes):
+        gamma_prices.append(None)
+    tokens = [
+        OutcomeToken(outcome=outcome, gamma_price=gamma_prices[idx], token_id=token_ids[idx])
+        for idx, outcome in enumerate(outcomes)
+    ]
+    return tokens, outcomes, gamma_prices[: len(outcomes)], token_ids, ""
+
+
+def best_order(orders: Any, side: str) -> float | None:
+    if not isinstance(orders, list) or not orders:
+        return None
+    values = []
+    for order in orders:
+        if isinstance(order, dict):
+            value = safe_float(order.get("price"))
+        else:
+            value = None
+        if value is not None:
+            values.append(value)
+    if not values:
+        return None
+    return max(values) if side == "bid" else min(values)
+
+
+def classify_outcome(outcome: str, home_team: str, away_team: str) -> str:
+    text = norm(outcome)
+    if text in {"draw", "tie"}:
+        return "draw"
+    for alias in aliases_for_team(home_team):
+        if norm(alias) and re.search(rf"\b{re.escape(norm(alias))}\b", text):
+            return "home_win"
+    for alias in aliases_for_team(away_team):
+        if norm(alias) and re.search(rf"\b{re.escape(norm(alias))}\b", text):
+            return "away_win"
+    if text in {"home", "home win"}:
+        return "home_win"
+    if text in {"away", "away win"}:
+        return "away_win"
+    return ""
+
+
+class PolymarketClient:
+    """Read-only public Polymarket helper. No wallet, auth, trading, or orders."""
+
+    def __init__(self, cfg: Config):
+        self.cfg = cfg
+        self.session = requests.Session()
+
+    def _gamma_get(self, path: str, params: dict[str, Any], debug: PolymarketDebugReport | None = None) -> Any:
+        url = f"{self.cfg.polymarket_gamma_base_url.rstrip('/')}/{path.lstrip('/')}"
+        response = self.session.get(url, params=params, timeout=20)
+        if debug is not None:
+            debug.request_urls.append(response.url)
+        response.raise_for_status()
+        return response.json()
+
+    def _clob_get(self, path: str, params: dict[str, Any], debug: PolymarketDebugReport | None = None) -> Any:
+        url = f"{self.cfg.polymarket_clob_base_url.rstrip('/')}/{path.lstrip('/')}"
+        response = self.session.get(url, params=params, timeout=20)
+        if debug is not None:
+            debug.request_urls.append(response.url)
+        response.raise_for_status()
+        return response.json()
+
+    def discover_tags_and_sports(self, debug: PolymarketDebugReport | None = None) -> None:
+        if debug is None:
+            return
+        try:
+            tags = self._gamma_get("/tags", {"limit": 500}, debug)
+            if isinstance(tags, list):
+                debug.tags_seen = [
+                    str(item.get("slug") or item.get("label"))
+                    for item in tags
+                    if isinstance(item, dict)
+                    and any(hint in f"{item.get('slug', '')} {item.get('label', '')}".lower() for hint in SPORT_HINTS)
+                ][:50]
+        except Exception as exc:
+            debug.tags_seen = [f"tags request failed: {exc}"]
+        try:
+            sports = self._gamma_get("/sports", {"limit": 500}, debug)
+            if isinstance(sports, list):
+                debug.sports_seen = [
+                    str(item.get("sport"))
+                    for item in sports
+                    if isinstance(item, dict)
+                    and any(hint in f"{item.get('sport', '')} {item.get('resolution', '')}".lower() for hint in SPORT_HINTS)
+                ][:50]
+        except Exception as exc:
+            debug.sports_seen = [f"sports request failed: {exc}"]
+
+    def fetch_active_events(
+        self,
+        debug: PolymarketDebugReport | None = None,
+        limit: int = 100,
+        max_pages: int = 30,
+        refresh: bool = False,
+    ) -> list[dict[str, Any]]:
+        events: list[dict[str, Any]] = []
+        for page in range(max_pages):
+            offset = page * limit
+            params = {"active": "true", "closed": "false", "limit": limit, "offset": offset}
+            rows = self._gamma_get("/events", params, debug)
+            if not isinstance(rows, list) or not rows:
+                break
+            events.extend([row for row in rows if isinstance(row, dict)])
+            if len(rows) < limit:
+                break
+        if debug is not None:
+            debug.events_fetched = len(events)
+        return events
+
+    def fetch_event_by_slug(self, slug: str, debug: PolymarketDebugReport | None = None) -> dict[str, Any] | None:
+        try:
+            event = self._gamma_get(f"/events/slug/{slug}", {}, debug)
+        except requests.HTTPError as exc:
+            if exc.response is not None and exc.response.status_code == 404:
+                return None
+            raise
+        return event if isinstance(event, dict) else None
+
+    def event_slug_candidates(self, home_team: str, away_team: str, match_date: str) -> list[str]:
+        if not match_date:
+            return []
+        home_parts = self._slug_team_codes(home_team)
+        away_parts = self._slug_team_codes(away_team)
+        candidates: list[str] = []
+        for home in home_parts:
+            for away in away_parts:
+                slug = f"fifwc-{home}-{away}-{match_date}"
+                if slug not in candidates:
+                    candidates.append(slug)
+        return candidates
+
+    def _slug_team_codes(self, team: str) -> list[str]:
+        parts: list[str] = []
+        code = TEAM_CODES.get(team)
+        if code:
+            parts.append(code.lower())
+        for alias in aliases_for_team(team):
+            slug = norm(alias).replace(" ", "-")
+            if slug and slug not in parts:
+                parts.append(slug)
+        return parts
+
+    def fetch_match_events(
+        self,
+        home_team: str,
+        away_team: str,
+        match_date: str,
+        debug: PolymarketDebugReport,
+        max_pages: int,
+        refresh: bool,
+    ) -> list[dict[str, Any]]:
+        for slug in self.event_slug_candidates(home_team, away_team, match_date):
+            event = self.fetch_event_by_slug(slug, debug)
+            if event is not None:
+                debug.events_fetched = 1
+                return [event]
+        return self.fetch_active_events(debug, max_pages=max_pages, refresh=refresh)
+
+    def _priced_token(self, token: OutcomeToken, market: dict[str, Any], debug: PolymarketDebugReport | None) -> OutcomeToken:
+        token.book_url = f"{self.cfg.polymarket_clob_base_url.rstrip()}/book?token_id={token.token_id}"
+        try:
+            book = self._clob_get("/book", {"token_id": token.token_id}, debug)
+        except Exception as exc:
+            token.book_error = str(exc)
+            token.last_trade_price = safe_float(market.get("lastTradePrice"))
+            if token.last_trade_price is not None:
+                token.implied_probability = token.last_trade_price
+                token.price_source = "gamma_last_trade_price_after_book_error"
+            return token
+
+        token.bid = best_order(book.get("bids"), "bid") if isinstance(book, dict) else None
+        token.ask = best_order(book.get("asks"), "ask") if isinstance(book, dict) else None
+        book_last_trade = book.get("lastTradePrice") if isinstance(book, dict) else None
+        if book_last_trade is None and isinstance(book, dict):
+            book_last_trade = book.get("last_trade_price")
+        token.last_trade_price = safe_float(book_last_trade)
+        if token.last_trade_price is None:
+            token.last_trade_price = safe_float(market.get("lastTradePrice"))
+        if token.bid is not None and token.ask is not None:
+            token.midpoint = (token.bid + token.ask) / 2
+            token.spread = token.ask - token.bid
+            if token.spread <= MAX_CLOB_SPREAD:
+                token.implied_probability = token.midpoint
+                token.price_source = "clob_midpoint"
+            elif token.last_trade_price is not None:
+                token.implied_probability = token.last_trade_price
+                token.price_source = "gamma_last_trade_price_wide_clob_spread"
+            else:
+                token.book_error = f"bid/ask spread too wide ({token.spread:.3f}) and no last trade price"
+        elif token.last_trade_price is not None:
+            token.implied_probability = token.last_trade_price
+            token.price_source = "gamma_last_trade_price_missing_bid_or_ask"
+        else:
+            token.book_error = "missing bid/ask and last trade price"
+        return token
+
+    def discover_match_markets(
+        self,
+        home_team: str,
+        away_team: str,
+        match_date: str = "",
+        max_pages: int = 30,
+        include_debug_discovery: bool = False,
+        refresh: bool = False,
+    ) -> PolymarketDebugReport:
+        debug = PolymarketDebugReport()
+        if include_debug_discovery:
+            self.discover_tags_and_sports(debug)
+        events = self.fetch_match_events(home_team, away_team, match_date, debug, max_pages=max_pages, refresh=refresh)
+        inspected = 0
+        candidates: list[PolymarketDebugCandidate] = []
+        for event in events:
+            markets = event.get("markets") if isinstance(event.get("markets"), list) else []
+            for market in markets:
+                if not isinstance(market, dict):
+                    continue
+                inspected += 1
+                text = market_text(event, market)
+                category, market_type = classify_match_market(event, market, home_team, away_team)
+                fuzzy_score, reasons = score_market_match(event, market, home_team, away_team, match_date)
+                tokens, outcomes, gamma_prices, token_ids, token_error = extract_outcome_tokens(market)
+                spread_line = parse_spread_line(text) if category == "spread" else None
+                total_line = parse_total_line(text) if category == "total" else None
+                accepted = False
+                rejected_reason = ""
+                if fuzzy_score < self.cfg.polymarket_match_confidence_threshold:
+                    rejected_reason = f"fuzzy score {fuzzy_score:.2f} below threshold {self.cfg.polymarket_match_confidence_threshold:.2f}"
+                elif category == "unknown":
+                    rejected_reason = "market type unknown"
+                elif token_error:
+                    rejected_reason = token_error
+                else:
+                    priced_tokens = [self._priced_token(token, market, debug) for token in tokens]
+                    tokens = priced_tokens
+                    accepted = any(token.implied_probability is not None for token in tokens)
+                    if not accepted:
+                        rejected_reason = "no usable CLOB midpoint or fallback last trade price"
+                candidates.append(
+                    PolymarketDebugCandidate(
+                        event_title=str(event.get("title", "")),
+                        event_slug=str(event.get("slug", "")),
+                        market_question=str(market.get("question", "")),
+                        market_slug=str(market.get("slug", "")),
+                        category=category,
+                        market_type=market_type,
+                        fuzzy_score=fuzzy_score,
+                        reasons=reasons,
+                        accepted=accepted,
+                        rejected_reason=rejected_reason,
+                        outcomes=outcomes,
+                        gamma_prices=gamma_prices,
+                        clob_token_ids=token_ids,
+                        tokens=tokens,
+                        spread_line=spread_line,
+                        total_line=total_line,
+                    )
+                )
+        debug.markets_inspected = inspected
+        debug.candidates = sorted(candidates, key=lambda item: item.fuzzy_score, reverse=True)
+        return debug
+
+    def best_moneyline_for_match(
+        self,
+        home_team: str,
+        away_team: str,
+        match_date: str,
+        refresh: bool = False,
+    ) -> dict[str, Any] | None:
+        # `refresh` is kept for CLI compatibility; Gamma/CLOB calls are live.
+        debug = self.discover_match_markets(home_team, away_team, match_date, max_pages=30, refresh=refresh)
+        pieces: dict[str, float] = {}
+        raw: dict[str, float] = {}
+        confidence_values: list[float] = []
+        source_titles: list[str] = []
+        for candidate in debug.candidates:
+            if not candidate.accepted or candidate.category != "moneyline":
                 continue
-            home_pos = text.lower().find(home_alias.lower())
-            away_pos = text.lower().find(away_alias.lower(), max(0, home_pos - 80))
-            if home_pos == -1 or away_pos == -1 or abs(home_pos - away_pos) > 250:
-                continue
-            start = max(0, min(home_pos, away_pos) - 120)
-            end = min(len(text), max(home_pos, away_pos) + 260)
-            window = text[start:end]
-            home_labels = [TEAM_CODES.get(home_team, ""), home_team, home_alias]
-            away_labels = [TEAM_CODES.get(away_team, ""), away_team, away_alias]
-            home_price = next((value for label in home_labels if label for value in [_price_after_label(window, label)] if value is not None), None)
-            draw_price = _price_after_label(window, "Draw")
-            away_price = next((value for label in away_labels if label for value in [_price_after_label(window, label)] if value is not None), None)
-            if home_price is None or draw_price is None or away_price is None:
-                continue
-            home, draw, away = normalize_probabilities([home_price, draw_price, away_price])
+            yes_token = next((token for token in candidate.tokens if norm(token.outcome) == "yes" and token.implied_probability is not None), None)
+            if candidate.market_type == "binary_home_win" and yes_token:
+                pieces["home_win"] = yes_token.implied_probability
+                raw["home_win"] = yes_token.implied_probability
+            elif candidate.market_type == "binary_draw" and yes_token:
+                pieces["draw"] = yes_token.implied_probability
+                raw["draw"] = yes_token.implied_probability
+            elif candidate.market_type == "binary_away_win" and yes_token:
+                pieces["away_win"] = yes_token.implied_probability
+                raw["away_win"] = yes_token.implied_probability
+            elif candidate.market_type == "three_way_moneyline":
+                for token in candidate.tokens:
+                    key = classify_outcome(token.outcome, home_team, away_team)
+                    if key and token.implied_probability is not None:
+                        pieces[key] = token.implied_probability
+                        raw[key] = token.implied_probability
+            if candidate.market_type in {"binary_home_win", "binary_draw", "binary_away_win", "three_way_moneyline"}:
+                confidence_values.append(candidate.fuzzy_score)
+                source_titles.append(candidate.market_question)
+            if {"home_win", "draw", "away_win"}.issubset(pieces):
+                break
+        if {"home_win", "draw", "away_win"}.issubset(pieces):
+            home, draw, away = normalize_probabilities([pieces["home_win"], pieces["draw"], pieces["away_win"]])
             return {
-                "raw": {"home_win": home_price / 100, "draw": draw_price / 100, "away_win": away_price / 100},
+                "raw": raw,
                 "normalized": {"home_win": home, "draw": draw, "away_win": away},
-                "window": window,
+                "source": "polymarket_gamma_events_clob",
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "age_minutes": 0.0,
+                "confidence": min(confidence_values) if confidence_values else 0.0,
+                "market_type": "assembled_binary_moneyline",
+                "title": " | ".join(source_titles),
+                "slug": "",
             }
-    return None
+        return None

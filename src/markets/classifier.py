@@ -26,13 +26,13 @@ def _ratio(a: str, b: str) -> float:
 
 def classify_market(title: str, outcomes: list[str] | None = None) -> tuple[str, str]:
     text = f"{title} {' '.join(outcomes or [])}".lower()
-    if any(word in text for word in ["spread", "handicap"]) or re.search(r"[+-]\d+(?:\.\d+)?", text):
-        return "spread", "spread"
+    if any(word in text for word in ["win the world cup", "win the 2026 fifa world cup", "winner", "champion", "lift the trophy"]):
+        return "futures", "futures_team"
     if any(word in text for word in ["total", "over", "under", "goals"]):
         if any(word in text for word in ["over", "under"]):
             return "total", "total_goals"
-    if any(word in text for word in ["win the world cup", "winner", "champion", "lift the trophy"]):
-        return "futures", "futures_team"
+    if any(word in text for word in ["spread", "handicap"]) or re.search(r"(?<![a-z0-9])[+-]\d+(?:\.\d+)?", text):
+        return "spread", "spread"
     if "draw" in text and any(word in text for word in ["win", "moneyline", "vs", " v "]):
         return "moneyline", "three_way_moneyline"
     if any(word in text for word in ["beat", "to win", "win?"]):
@@ -92,4 +92,3 @@ def score_candidate(raw: dict[str, Any], home_team: str, away_team: str, match_d
         confidence += 0.05
         reasons.append("total line parsed")
     return MarketCandidate(title=title, category=category, market_type=market_type, confidence=min(confidence, 1.0), reasons=reasons, raw=raw, spread_line=spread_line, total_line=total_line)
-

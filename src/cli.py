@@ -8,7 +8,7 @@ import pandas as pd
 
 from src.config import Config
 from src.data_sources.historical_results import load_historical_results
-from src.data_sources.polymarket import PolymarketClient
+from src.data_sources.polymarket import PolymarketClient, PolymarketDebugCandidate
 from src.data_sources.schedule import load_schedule, validate_schedule
 from src.data_sources.team_mapping import TeamNameMapper
 from src.models.backtesting import simple_backtest
@@ -146,27 +146,81 @@ def market_candidates_command(args: argparse.Namespace) -> int:
         return 1
     row = rows.iloc[0]
     client = PolymarketClient(cfg)
-    scraped = client.scrape_worldcup_moneyline(row["home_team"], row["away_team"], refresh=args.refresh_markets)
-    if scraped:
-        print("World Cup games page moneyline:")
-        print(f"   source={scraped['source']} confidence={scraped['confidence']:.2f}")
-        print(f"   raw={scraped['raw']}")
-        print(f"   normalized={scraped['normalized']}")
-        print("")
-    candidates = client.candidates_for_match(row["home_team"], row["away_team"], row["date"], refresh=args.refresh_markets)
+    report = client.discover_match_markets(
+        row["home_team"],
+        row["away_team"],
+        row["date"],
+        max_pages=args.max_pages,
+        refresh=args.refresh_markets,
+    )
+    candidates = report.candidates[:15]
     if not candidates:
-        print("No Polymarket candidates found or public API unavailable.")
+        print("No Polymarket candidates found.")
         return 0
-    for idx, candidate in enumerate(candidates[:15], start=1):
-        print(f"{idx}. {candidate.title}")
-        print(f"   category={candidate.category} type={candidate.market_type} confidence={candidate.confidence:.2f}")
-        if candidate.spread_line is not None:
-            print(f"   spread_line={candidate.spread_line}")
-        if candidate.total_line is not None:
-            print(f"   total_line={candidate.total_line}")
-        print(f"   reasons={'; '.join(candidate.reasons)}")
-        print("   mapping suggestion:")
-        print(f"   {row['match_id']},{row['home_team']},{row['away_team']},{candidate.category},,{candidate.raw.get('slug', '')},,,,,,,,,{candidate.market_type},review candidate")
+    print(f"Events fetched: {report.events_fetched}")
+    print(f"Markets inspected: {report.markets_inspected}")
+    for idx, candidate in enumerate(candidates, start=1):
+        print_candidate_summary(idx, candidate)
+    return 0
+
+
+def print_candidate_summary(idx: int, candidate: PolymarketDebugCandidate) -> None:
+    print(f"{idx}. {candidate.event_title} / {candidate.market_question}")
+    print(f"   event_slug={candidate.event_slug}")
+    print(f"   market_slug={candidate.market_slug}")
+    print(f"   fuzzy_score={candidate.fuzzy_score:.2f}")
+    print(f"   category={candidate.category} type={candidate.market_type}")
+    print(f"   accepted={'yes' if candidate.accepted else 'no'}")
+    if candidate.rejected_reason:
+        print(f"   rejected_reason={candidate.rejected_reason}")
+    if candidate.spread_line is not None:
+        print(f"   spread_line={candidate.spread_line}")
+    if candidate.total_line is not None:
+        print(f"   total_line={candidate.total_line}")
+    print(f"   reasons={'; '.join(candidate.reasons) or 'none'}")
+    print(f"   outcomes={candidate.outcomes}")
+    print(f"   clobTokenIds={candidate.clob_token_ids}")
+    print(f"   Gamma outcomePrices={candidate.gamma_prices}")
+    for token in candidate.tokens:
+        print(
+            "   CLOB "
+            f"{token.outcome}: bid={token.bid} ask={token.ask} midpoint={token.midpoint} "
+            f"spread={token.spread} last_trade={token.last_trade_price} "
+            f"implied={token.implied_probability} source={token.price_source}"
+        )
+        if token.book_error:
+            print(f"      book_error={token.book_error}")
+
+
+def debug_polymarket_command(args: argparse.Namespace) -> int:
+    cfg = Config()
+    state = build_state(cfg)
+    rows = state.schedule[state.schedule["match_id"].eq(args.match_id)]
+    if rows.empty:
+        print(f"No match found with match_id={args.match_id}")
+        return 1
+    row = rows.iloc[0]
+    client = PolymarketClient(cfg)
+    report = client.discover_match_markets(
+        row["home_team"],
+        row["away_team"],
+        row["date"],
+        max_pages=args.max_pages,
+        include_debug_discovery=True,
+        refresh=True,
+    )
+    print("Request URLs:")
+    for url in report.request_urls:
+        print(f"- {url}")
+    print("")
+    print(f"Events fetched: {report.events_fetched}")
+    print(f"Markets inspected: {report.markets_inspected}")
+    print(f"Sports hints seen: {report.sports_seen or 'none'}")
+    print(f"Relevant tags seen: {report.tags_seen or 'none'}")
+    print("")
+    print("Top 10 candidate markets:")
+    for idx, candidate in enumerate(report.candidates[:10], start=1):
+        print_candidate_summary(idx, candidate)
     return 0
 
 
@@ -226,7 +280,12 @@ def build_parser() -> argparse.ArgumentParser:
     candidates = sub.add_parser("market-candidates")
     candidates.add_argument("--match-id", required=True)
     candidates.add_argument("--refresh-markets", action="store_true")
+    candidates.add_argument("--max-pages", type=int, default=30)
     candidates.set_defaults(func=market_candidates_command)
+    debug_pm = sub.add_parser("debug-polymarket")
+    debug_pm.add_argument("--match-id", required=True)
+    debug_pm.add_argument("--max-pages", type=int, default=30)
+    debug_pm.set_defaults(func=debug_polymarket_command)
     sub.add_parser("backtest").set_defaults(func=backtest_command)
     sub.add_parser("export").set_defaults(func=export_command)
     return parser
