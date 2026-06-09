@@ -9,7 +9,4 @@ env/
 kaggle.json
 world-cup_2026-schedule.csv
 world_football_elo_ratings_2026_world_cup_complete.csv
-data/*
-!data/manual/
-data/manual/*
-!data/manual/team_name_mapping.csv
+data/
