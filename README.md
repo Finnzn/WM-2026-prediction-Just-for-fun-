@@ -55,6 +55,18 @@ The schedule CSV is the source of truth for World Cup 2026 state. Before a
 match, set `status=scheduled` and leave scores empty. After a match, enter
 `home_score`, `away_score`, and set `status=played`.
 
+For manual updates, edit these fields in
+`data/manual/worldcup_2026_schedule.csv`:
+
+```text
+status=played
+home_score=<home team goals>
+away_score=<away team goals>
+```
+
+The old `result` column may stay empty; explicit `home_score` and `away_score`
+are the reliable fields used for future tournament-state updates.
+
 Played World Cup matches are appended to the effective training history with a
 high weight, so future predictions react to tournament form, current goals
 scored/conceded, and dynamic Elo updates. Played matches are skipped by normal

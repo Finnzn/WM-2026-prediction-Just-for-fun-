@@ -69,6 +69,12 @@ def validate_schedule(df: pd.DataFrame) -> tuple[list[str], list[str]]:
         missing_scores = df.loc[played, "home_score"].eq("") | df.loc[played, "away_score"].eq("")
         if missing_scores.any():
             errors.append(f"Played matches missing scores: {df.loc[played & missing_scores, 'match_id'].tolist()}")
+        home_numeric = pd.to_numeric(df.loc[played, "home_score"], errors="coerce").notna()
+        away_numeric = pd.to_numeric(df.loc[played, "away_score"], errors="coerce").notna()
+        non_numeric = played.copy()
+        non_numeric.loc[played] = ~(home_numeric & away_numeric).to_numpy()
+        if non_numeric.any():
+            errors.append(f"Played matches with non-numeric scores: {df.loc[non_numeric, 'match_id'].tolist()}")
     scheduled = df.get("status", pd.Series(dtype=str)).eq("scheduled")
     scored_scheduled = scheduled & (df["home_score"].ne("") | df["away_score"].ne(""))
     if scored_scheduled.any():
@@ -87,4 +93,3 @@ def played_worldcup_results(schedule: pd.DataFrame) -> pd.DataFrame:
     rows["tournament"] = "FIFA World Cup 2026"
     rows["source_weight"] = 3.0
     return rows
-

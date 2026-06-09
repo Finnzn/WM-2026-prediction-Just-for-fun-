@@ -18,7 +18,7 @@ TEAM_ALIASES = {
     "Bosnia and Herzegovina": ["Bosnia and Herzegovina", "Bosnia-Herzegovina", "BIH"],
     "Cape Verde": ["Cape Verde", "Cabo Verde", "CVI"],
     "Cote d'Ivoire": ["Cote d'Ivoire", "Côte d'Ivoire", "Ivory Coast", "CIV"],
-    "Curaçao": ["Curaçao", "Curacao", "CUW", "KOR"],
+    "Curaçao": ["Curaçao", "Curacao", "CUW"],
     "Czechia": ["Czechia", "Czech Republic", "CZE"],
     "DR Congo": ["DR Congo", "Congo DR", "COD"],
     "South Africa": ["South Africa", "RSA"],
