@@ -1,205 +1,157 @@
-# WM-2026-prediction-Just-for-fun-
+# World Cup 2026 Predictor
 
-## World Cup 2026 Predictor
+Local prediction dashboard for FIFA World Cup 2026 matches.
 
-This is a free, local, transparent prediction project for a private FIFA World
-Cup 2026 prediction game. It predicts scheduled matches from local CSV files
-using a baseline that combines:
+The intended workflow is:
 
-- recent international results
-- current World Cup 2026 played matches from the schedule CSV
-- dynamic Elo ratings
-- recent attacking and defensive goal rates
-- a Poisson exact-score model
-- optional manual/read-only Polymarket probability inputs
+1. Keep the local data files updated.
+2. Start the dashboard.
+3. Select a match and model/market weights.
+4. The app fetches live Polymarket data, combines it with the local statistical model, and shows a prediction.
 
-It does not implement gambling, trading, staking, wallet access, private keys,
-order placement, bookmaker scraping, Bet365 scraping, or authenticated market
-endpoints.
+## Run The Dashboard
 
-Default match-probability blending is market-led:
-
-```text
-40% statistical model
-60% Polymarket moneyline
+```bash
+python3 -m src.dashboard
 ```
 
-In live mode, the default is:
+Then open:
+
+```text
+http://127.0.0.1:8000
+```
+
+The dashboard uses:
+
+- `data/manual/worldcup_2026_schedule.csv`
+- `data/manual/elo_ratings.csv`
+- `data/manual/team_name_mapping.csv`
+- `data/processed/clean_historical_results.csv`
+- live read-only Polymarket Gamma and CLOB APIs
+
+The dashboard defaults to live weights:
 
 ```text
 30% statistical model
 70% Polymarket moneyline
 ```
 
-## Data Files
+You can change the weights in the dashboard before clicking predict.
 
-The main local files are:
+## Prediction Logic
+
+For each selected scheduled match, the program:
+
+1. Loads cleaned historical international results.
+2. Adds any `status=played` World Cup 2026 matches from the schedule as current tournament data.
+3. Loads the provided Elo ratings.
+4. Updates Elo dynamically with played World Cup 2026 matches.
+5. Estimates attacking and defensive strength from recent weighted results.
+6. Builds a Poisson score model.
+7. Fetches Polymarket moneyline markets.
+8. Blends probabilities with the standard default weights:
 
 ```text
-data/raw/historical_results.csv
-data/manual/worldcup_2026_schedule.csv
-data/manual/elo_ratings.csv
-data/manual/team_name_mapping.csv
-data/manual/polymarket_market_mapping.csv
-data/manual/manual_market_probs.csv
+40% statistical model
+60% Polymarket moneyline
 ```
 
-Optional files may be empty or missing. The project still runs without
-Polymarket or manual market data.
-
-Example templates live in `examples/`.
-
-## Schedule As Tournament State
-
-The schedule CSV is the source of truth for World Cup 2026 state. Before a
-match, set `status=scheduled` and leave scores empty. After a match, enter
-`home_score`, `away_score`, and set `status=played`.
-
-For manual updates, edit these fields in
-`data/manual/worldcup_2026_schedule.csv`:
+The schedule is the source of truth for World Cup 2026 state. When a match is played, edit:
 
 ```text
 status=played
-home_score=<home team goals>
-away_score=<away team goals>
+home_score=<home goals>
+away_score=<away goals>
 ```
 
-The old `result` column may stay empty; explicit `home_score` and `away_score`
-are the reliable fields used for future tournament-state updates.
+Future predictions for both teams will then include that played match.
 
-Played World Cup matches are appended to the effective training history with a
-high weight, so future predictions react to tournament form, current goals
-scored/conceded, and dynamic Elo updates. Played matches are skipped by normal
-prediction commands. Fixtures with placeholders such as `TBD`, `Winner Group A`,
-or `Runner-up Group B` are skipped until actual teams are known.
+## Polymarket Fetching
 
-## Why Four Years
+The app does not search odds directly by team name.
 
-By default, historical results use only the last four years. Football is
-non-stationary: squads age, coaches change, tactical systems shift, and national
-teams go through player-generation cycles. Older data can become a weak prior,
-but it is ignored by default to reduce regime shift and concept drift.
+For a match such as `M001`, Mexico vs South Africa on `2026-06-11`, it:
 
-## Commands
+1. Builds likely World Cup event slugs from team codes and the date, for example:
 
-Validate local files:
+```text
+fifwc-mex-rsa-2026-06-11
+```
+
+2. Fetches the Gamma event:
+
+```text
+https://gamma-api.polymarket.com/events/slug/fifwc-mex-rsa-2026-06-11
+```
+
+3. Reads the event's markets and parses:
+
+```text
+outcomes
+outcomePrices
+clobTokenIds
+```
+
+4. Fetches live CLOB order books using each token ID:
+
+```text
+https://clob.polymarket.com/book?token_id=<clobTokenId>
+```
+
+5. Uses best bid and best ask midpoint when the spread is acceptable.
+
+For `M001`, the useful markets are the three binary moneyline markets:
+
+- Will Mexico win?
+- Will the match end in a draw?
+- Will South Africa win?
+
+The model normalizes those three implied probabilities into home/draw/away probabilities.
+
+Over/under and spread markets are discovered and classified by the Polymarket
+client, but current predictions only use moneyline odds. Totals should calibrate
+the score matrix and expected total goals rather than directly replace W/D/L
+probabilities, so they are intentionally kept out of the main prediction blend
+until their matching and calibration are reviewed.
+
+If exact slug lookup fails, the client falls back to paginated Gamma event discovery:
+
+```text
+https://gamma-api.polymarket.com/events?active=true&closed=false&limit=100&offset=...
+```
+
+## Useful Commands
+
+Validate local data:
 
 ```bash
-python -m src.cli validate-data
+python3 -m src.cli validate-data
 ```
 
-Update tournament state and dynamic Elo:
+Refresh tournament state files:
 
 ```bash
-python -m src.cli update-state
+python3 -m src.cli update-state
 ```
 
-Predict all unplayed known-team matches:
+Predict one match in the terminal:
 
 ```bash
-python -m src.cli predict-all
+python3 -m src.cli predict-match --match-id M001 --refresh-markets
 ```
 
-Predict one match:
+Debug Polymarket matching:
 
 ```bash
-python -m src.cli predict-match --match-id M041
+python3 -m src.cli debug-polymarket --match-id M001
 ```
 
-Right before kickoff, with fresh public Polymarket candidate discovery:
-
-```bash
-python -m src.cli predict-match --match-id M041 --refresh-markets --live
-```
-
-Show read-only Polymarket candidates for manual review:
-
-```bash
-python -m src.cli market-candidates --match-id M041
-```
-
-Run a simple time-safe backtest:
-
-```bash
-python -m src.cli backtest
-```
-
-Export predictions:
-
-```bash
-python -m src.cli export
-```
-
-Outputs are written to `outputs/predictions.csv`, `outputs/predictions.json`,
-and `outputs/predictions.xlsx` when `openpyxl` is installed.
-
-## Markets
-
-Polymarket is optional and read-only. Moneyline, spread, and total-goals markets
-are different signals:
-
-- Moneyline can inform win/draw/loss probabilities.
-- Spread calibrates goal-difference probabilities.
-- Total goals calibrates expected total goals.
-
-The model does not mix these signals directly. Low-confidence automatic market
-matches are reported but not used automatically; add them to the manual mapping
-file after review. Manual probabilities in `manual_market_probs.csv` take
-priority when available.
-
-## Exact Scores And Confidence
-
-Exact-score predictions are inherently uncertain because football is low-scoring
-and high-variance. The confidence score summarizes favorite strength, data
-depth, and optional market agreement; it is not a guarantee.
-
-## Historical Data Ingestion
-
-Before training a model, create the cleaned historical results file:
+Regenerate cleaned historical data from the local raw file:
 
 ```bash
 python3 scripts/ingest_historical_results.py
 ```
 
-The script first uses `data/raw/historical_results.csv` when it already exists.
-If the raw file is missing, KaggleHub download mode is opt-in:
+## Data Policy
 
-```bash
-python3 scripts/ingest_historical_results.py --download-if-missing
-```
-
-or:
-
-```bash
-DOWNLOAD_HISTORICAL_DATA=true python3 scripts/ingest_historical_results.py
-```
-
-The KaggleHub dataset is `martj42/international-football-results-from-1872-to-2017`.
-Public datasets may download without a Kaggle API key. If Kaggle requires login,
-authenticate with KaggleHub or provide `KAGGLE_USERNAME` and `KAGGLE_KEY` in your
-environment. Never hardcode Kaggle credentials and never commit `kaggle.json`.
-
-Cleaned output is written to:
-
-```text
-data/processed/clean_historical_results.csv
-```
-
-By default, only matches from the last four years are kept. To keep older matches
-as weak priors, run:
-
-```bash
-USE_OLDER_DATA_AS_PRIOR=true python3 scripts/ingest_historical_results.py
-```
-
-Team names are normalized with `data/manual/team_name_mapping.csv` when mappings
-exist. The World Cup 2026 schedule source of truth is
-`data/manual/worldcup_2026_schedule.csv`; scheduled or unplayed 2026 fixtures are
-excluded from historical training data.
-
-To normalize team/country names across the local schedule, ELO, and cleaned
-historical CSVs after editing the mapping file, run:
-
-```bash
-python3 scripts/normalize_country_names.py
-```
+The `data/` folder is local and ignored by Git, except any files that were already intentionally tracked before. Do not commit Kaggle credentials, `kaggle.json`, raw downloads, generated predictions, or secrets.

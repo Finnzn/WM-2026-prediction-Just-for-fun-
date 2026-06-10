@@ -48,12 +48,8 @@ def validate_data(_: argparse.Namespace) -> int:
     for path in required:
         if not path.exists():
             errors.append(f"Missing required file: {path}")
-    optional_paths = [cfg.team_mapping_path, cfg.polymarket_mapping_path, cfg.manual_market_probs_path]
     if not cfg.elo_ratings_path.exists():
-        optional_paths.append(cfg.elo_ratings_path)
-    for optional in optional_paths:
-        if not optional.exists():
-            warnings.append(f"Optional file missing: {optional}")
+        warnings.append(f"Optional file missing: {cfg.elo_ratings_path}")
     if cfg.schedule_path.exists():
         schedule = load_schedule(cfg.schedule_path, mapper)
         schedule_errors, schedule_warnings = validate_schedule(schedule)
@@ -63,16 +59,6 @@ def validate_data(_: argparse.Namespace) -> int:
         historical = load_historical_results(hist_path, mapper)
         if historical.empty:
             errors.append(f"No usable historical rows in {hist_path}")
-    if cfg.manual_market_probs_path.exists():
-        df = pd.read_csv(cfg.manual_market_probs_path, dtype=str, keep_default_na=False)
-        expected = {"match_id", "home_win_prob", "draw_prob", "away_win_prob"}
-        missing = expected - set(df.columns)
-        if missing:
-            errors.append(f"manual_market_probs missing columns: {sorted(missing)}")
-        for row in df.itertuples(index=False):
-            vals = [float(getattr(row, col) or 0) for col in ["home_win_prob", "draw_prob", "away_win_prob"]]
-            if abs(sum(vals) - 1.0) > 0.05 and abs(sum(vals) - 100.0) > 5:
-                warnings.append(f"Manual market probabilities for {getattr(row, 'match_id', '?')} do not sum near 1 or 100")
     _print_list("Errors:", errors)
     _print_list("Warnings:", warnings)
     print("Data validation passed." if not errors else "Data validation failed.")

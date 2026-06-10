@@ -2,8 +2,5 @@ pandas
 kagglehub
 numpy
 requests
-python-dotenv
-typer
-rapidfuzz
 openpyxl
 pytest

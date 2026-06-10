@@ -1,4 +1,6 @@
 from src.data_sources.polymarket import classify_match_market, extract_outcome_tokens
+from src.data_sources.polymarket import PolymarketClient
+from src.config import Config
 from src.markets.classifier import score_candidate
 
 
@@ -31,3 +33,9 @@ def test_world_cup_futures_do_not_classify_as_match_moneyline():
     event = {"title": "2026 FIFA World Cup Winner", "slug": "fifa-world-cup-2026-winner"}
     market = {"question": "Will Mexico win the 2026 FIFA World Cup?", "slug": "mexico-win-2026-fifa-world-cup"}
     assert classify_match_market(event, market, "Mexico", "South Africa")[0] == "futures"
+
+
+def test_polymarket_slug_candidates_include_utc_date_and_market_codes():
+    client = PolymarketClient(Config())
+    assert "fifwc-kr-cze-2026-06-11" in client.event_slug_candidates("South Korea", "Czechia", "2026-06-12")
+    assert "fifwc-usa-par-2026-06-12" in client.event_slug_candidates("United States", "Paraguay", "2026-06-13")

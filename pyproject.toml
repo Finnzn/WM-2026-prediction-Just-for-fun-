@@ -7,9 +7,7 @@ dependencies = [
   "pandas",
   "numpy",
   "requests",
-  "python-dotenv",
-  "typer",
-  "rapidfuzz",
+  "kagglehub",
   "openpyxl",
   "pytest",
 ]
@@ -17,4 +15,3 @@ dependencies = [
 [tool.pytest.ini_options]
 pythonpath = ["."]
 testpaths = ["tests"]
-

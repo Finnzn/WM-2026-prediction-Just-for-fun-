@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from difflib import SequenceMatcher
 from typing import Any
 
@@ -16,6 +16,7 @@ from src.utils import normalize_probabilities, safe_float
 
 SPORT_HINTS = {"soccer", "football", "world cup", "fifa", "fifwc"}
 MAX_CLOB_SPREAD = 0.15
+FIFA_WORLD_CUP_SERIES_ID = "11433"
 
 TEAM_ALIASES = {
     "Bosnia and Herzegovina": ["Bosnia and Herzegovina", "Bosnia-Herzegovina", "BIH"],
@@ -75,6 +76,10 @@ TEAM_CODES = {
     "United States": "USA",
     "Uruguay": "URY",
     "Uzbekistan": "UZB",
+}
+
+POLYMARKET_TEAM_CODES = {
+    "South Korea": "KR",
 }
 
 
@@ -413,6 +418,35 @@ class PolymarketClient:
             debug.events_fetched = len(events)
         return events
 
+    def fetch_worldcup_events(
+        self,
+        debug: PolymarketDebugReport | None = None,
+        limit: int = 100,
+        max_pages: int = 5,
+    ) -> list[dict[str, Any]]:
+        events: list[dict[str, Any]] = []
+        for page in range(max_pages):
+            offset = page * limit
+            params = {
+                "active": "true",
+                "closed": "false",
+                "series_id": FIFA_WORLD_CUP_SERIES_ID,
+                "limit": limit,
+                "offset": offset,
+            }
+            try:
+                rows = self._gamma_get("/events", params, debug)
+            except (requests.RequestException, json.JSONDecodeError, ValueError):
+                break
+            if not isinstance(rows, list) or not rows:
+                break
+            events.extend([row for row in rows if isinstance(row, dict)])
+            if len(rows) < limit:
+                break
+        if debug is not None:
+            debug.events_fetched = len(events)
+        return events
+
     def fetch_event_by_slug(self, slug: str, debug: PolymarketDebugReport | None = None) -> dict[str, Any] | None:
         try:
             event = self._gamma_get(f"/events/slug/{slug}", {}, debug)
@@ -425,20 +459,37 @@ class PolymarketClient:
     def event_slug_candidates(self, home_team: str, away_team: str, match_date: str) -> list[str]:
         if not match_date:
             return []
+        dates = self._slug_dates(match_date)
         home_parts = self._slug_team_codes(home_team)
         away_parts = self._slug_team_codes(away_team)
         candidates: list[str] = []
-        for home in home_parts:
-            for away in away_parts:
-                slug = f"fifwc-{home}-{away}-{match_date}"
-                if slug not in candidates:
-                    candidates.append(slug)
+        for date_part in dates:
+            for home in home_parts:
+                for away in away_parts:
+                    slug = f"fifwc-{home}-{away}-{date_part}"
+                    if slug not in candidates:
+                        candidates.append(slug)
         return candidates
+
+    def _slug_dates(self, match_date: str) -> list[str]:
+        dates = [match_date]
+        try:
+            parsed = datetime.strptime(match_date, "%Y-%m-%d").date()
+        except ValueError:
+            return dates
+        for candidate in [parsed - timedelta(days=1), parsed + timedelta(days=1)]:
+            value = candidate.isoformat()
+            if value not in dates:
+                dates.append(value)
+        return dates
 
     def _slug_team_codes(self, team: str) -> list[str]:
         parts: list[str] = []
+        polymarket_code = POLYMARKET_TEAM_CODES.get(team)
+        if polymarket_code:
+            parts.append(polymarket_code.lower())
         code = TEAM_CODES.get(team)
-        if code:
+        if code and code.lower() not in parts:
             parts.append(code.lower())
         for alias in aliases_for_team(team):
             slug = norm(alias).replace(" ", "-")
@@ -460,7 +511,7 @@ class PolymarketClient:
             if event is not None:
                 debug.events_fetched = 1
                 return [event]
-        return self.fetch_active_events(debug, max_pages=max_pages, refresh=refresh)
+        return self.fetch_worldcup_events(debug, max_pages=max_pages)
 
     def _priced_token(self, token: OutcomeToken, market: dict[str, Any], debug: PolymarketDebugReport | None) -> OutcomeToken:
         token.book_url = f"{self.cfg.polymarket_clob_base_url.rstrip()}/book?token_id={token.token_id}"

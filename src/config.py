@@ -27,8 +27,6 @@ class Config:
     schedule_path: Path = Path(os.getenv("WORLDCUP_2026_SCHEDULE_PATH", "data/manual/worldcup_2026_schedule.csv"))
     elo_ratings_path: Path = Path(os.getenv("ELO_RATINGS_PATH", "data/manual/elo_ratings.csv"))
     team_mapping_path: Path = Path(os.getenv("TEAM_MAPPING_PATH", "data/manual/team_name_mapping.csv"))
-    polymarket_mapping_path: Path = Path(os.getenv("POLYMARKET_MAPPING_PATH", "data/manual/polymarket_market_mapping.csv"))
-    manual_market_probs_path: Path = Path(os.getenv("MANUAL_MARKET_PROBS_PATH", "data/manual/manual_market_probs.csv"))
 
     polymarket_gamma_base_url: str = os.getenv("POLYMARKET_GAMMA_BASE_URL", "https://gamma-api.polymarket.com")
     polymarket_clob_base_url: str = os.getenv("POLYMARKET_CLOB_BASE_URL", "https://clob.polymarket.com")
