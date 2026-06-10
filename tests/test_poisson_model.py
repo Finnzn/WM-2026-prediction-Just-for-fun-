@@ -26,7 +26,7 @@ def test_wdl_calibration_matches_target_probabilities():
     assert np.isclose(away, 0.25)
 
 
-def test_predicted_score_follows_most_likely_outcome_bucket():
+def test_predicted_score_uses_highest_probability_exact_score():
     matrix = np.zeros((4, 4))
     matrix[1, 1] = 0.14
     matrix[1, 0] = 0.13
@@ -41,5 +41,5 @@ def test_predicted_score_follows_most_likely_outcome_bucket():
     matrix = matrix / matrix.sum()
     pred = prediction_from_matrix(matrix)
     assert pred["home_win_prob"] > pred["draw_prob"]
-    assert pred["predicted_home_goals"] > pred["predicted_away_goals"]
+    assert pred["predicted_score"] == "1-1"
     assert pred["top_5_scorelines"][0]["score"] == "1-1"
