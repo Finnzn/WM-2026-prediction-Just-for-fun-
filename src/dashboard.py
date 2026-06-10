@@ -21,15 +21,18 @@ INDEX_HTML = """<!doctype html>
   <style>
     :root {
       color-scheme: light;
-      --bg: #f6f7f9;
-      --panel: #ffffff;
-      --ink: #18202a;
-      --muted: #647386;
-      --line: #d8dee8;
-      --accent: #0969da;
-      --accent-dark: #0757b8;
-      --good: #0f8a5f;
-      --warn: #a15c00;
+      --bg: #f3f5f1;
+      --surface: #ffffff;
+      --surface-2: #f8faf7;
+      --ink: #17202a;
+      --muted: #657386;
+      --line: #d8ded7;
+      --blue: #155eef;
+      --blue-2: #0f49ba;
+      --green: #147a55;
+      --amber: #b45f06;
+      --red: #b42318;
+      --shadow: 0 12px 30px rgba(23, 32, 42, .08);
     }
     * { box-sizing: border-box; }
     body {
@@ -37,201 +40,243 @@ INDEX_HTML = """<!doctype html>
       background: var(--bg);
       color: var(--ink);
       font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      font-size: 15px;
+      font-size: 14px;
     }
-    header {
-      border-bottom: 1px solid var(--line);
-      background: var(--panel);
-    }
-    .wrap {
-      width: min(1180px, calc(100vw - 32px));
+    .shell {
+      width: min(1320px, calc(100vw - 32px));
       margin: 0 auto;
     }
+    header {
+      background: #111820;
+      color: white;
+      border-bottom: 1px solid rgba(255,255,255,.12);
+    }
     .topbar {
-      min-height: 72px;
+      min-height: 64px;
       display: flex;
       align-items: center;
       justify-content: space-between;
-      gap: 20px;
+      gap: 18px;
     }
     h1 {
       margin: 0;
-      font-size: 22px;
-      line-height: 1.2;
+      font-size: 20px;
+      line-height: 1.15;
       letter-spacing: 0;
     }
-    .sub {
-      margin-top: 4px;
-      color: var(--muted);
-      font-size: 13px;
-    }
-    main {
-      padding: 22px 0 32px;
-    }
-    .controls {
+    main { padding: 18px 0 34px; }
+    .toolbar {
       display: grid;
-      grid-template-columns: minmax(260px, 1fr) 190px 120px 120px auto auto;
-      gap: 12px;
+      grid-template-columns: minmax(280px, 1.4fr) 170px 118px 118px auto auto;
+      gap: 10px;
       align-items: end;
-      margin-bottom: 18px;
+      margin-bottom: 14px;
     }
     label {
       display: grid;
       gap: 6px;
       color: var(--muted);
-      font-size: 12px;
-      font-weight: 650;
+      font-size: 11px;
+      font-weight: 760;
       text-transform: uppercase;
     }
     select, input, button {
       height: 40px;
       border: 1px solid var(--line);
       border-radius: 6px;
-      background: var(--panel);
+      background: var(--surface);
       color: var(--ink);
       font: inherit;
     }
-    select, input {
-      width: 100%;
-      padding: 0 12px;
-    }
+    select, input { width: 100%; padding: 0 11px; }
     button {
-      padding: 0 14px;
-      background: var(--accent);
+      padding: 0 15px;
+      background: var(--blue);
       color: white;
-      border-color: var(--accent);
-      font-weight: 700;
+      border-color: var(--blue);
+      font-weight: 760;
       cursor: pointer;
+      white-space: nowrap;
     }
-    button:hover { background: var(--accent-dark); }
+    button:hover { background: var(--blue-2); }
     button.secondary {
-      background: var(--panel);
+      background: var(--surface);
       color: var(--ink);
       border-color: var(--line);
     }
-    button:disabled {
-      opacity: .55;
-      cursor: wait;
-    }
-    .grid {
-      display: grid;
-      grid-template-columns: 1.25fr .75fr;
-      gap: 16px;
-    }
-    .panel {
-      background: var(--panel);
+    button:disabled { opacity: .55; cursor: wait; }
+    .message {
+      margin-bottom: 14px;
+      padding: 11px 13px;
       border: 1px solid var(--line);
       border-radius: 8px;
-      padding: 16px;
+      background: var(--surface);
+      color: var(--muted);
     }
-    .panel h2 {
-      margin: 0 0 12px;
-      font-size: 15px;
-      letter-spacing: 0;
+    .error {
+      border-color: #f4b5ae;
+      background: #fff6f5;
+      color: var(--red);
     }
-    .score {
+    .layout {
+      display: grid;
+      grid-template-columns: minmax(0, 1.45fr) minmax(340px, .9fr);
+      gap: 14px;
+      align-items: start;
+    }
+    .stack { display: grid; gap: 14px; }
+    .panel {
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      box-shadow: var(--shadow);
+      padding: 15px;
+    }
+    .panel-head {
       display: flex;
       align-items: center;
       justify-content: space-between;
-      gap: 18px;
-      padding: 10px 0 16px;
-      border-bottom: 1px solid var(--line);
-      margin-bottom: 14px;
+      gap: 12px;
+      margin-bottom: 12px;
     }
-    .team {
-      flex: 1;
-      min-width: 0;
+    h2 {
+      margin: 0;
+      font-size: 14px;
+      line-height: 1.2;
+      letter-spacing: 0;
     }
-    .team .name {
-      font-size: clamp(19px, 3vw, 30px);
-      line-height: 1.1;
-      font-weight: 800;
-      overflow-wrap: anywhere;
-    }
-    .goals {
-      width: 64px;
-      height: 58px;
-      display: grid;
-      place-items: center;
-      border: 1px solid var(--line);
-      border-radius: 6px;
-      font-size: 28px;
-      font-weight: 850;
-      background: #f9fafb;
-    }
-    .meta {
+    .pill-row {
       display: flex;
       flex-wrap: wrap;
-      gap: 8px;
-      margin-bottom: 14px;
+      gap: 7px;
     }
     .pill {
       border: 1px solid var(--line);
       border-radius: 999px;
-      padding: 5px 9px;
+      padding: 4px 8px;
+      background: var(--surface-2);
       color: var(--muted);
       font-size: 12px;
-      background: #fbfcfe;
+      line-height: 1.3;
+    }
+    .hero-score {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+      gap: 14px;
+      align-items: stretch;
+      padding: 8px 0 14px;
+      border-bottom: 1px solid var(--line);
+      margin-bottom: 14px;
+    }
+    .team-box {
+      min-width: 0;
+      display: grid;
+      align-content: center;
+      gap: 7px;
+    }
+    .team-name {
+      font-size: clamp(23px, 3.2vw, 38px);
+      font-weight: 850;
+      line-height: 1.02;
+      overflow-wrap: anywhere;
+    }
+    .score-box {
+      min-width: 132px;
+      display: grid;
+      grid-template-columns: 1fr auto 1fr;
+      align-items: center;
+      justify-items: center;
+      gap: 8px;
+    }
+    .goal {
+      width: 54px;
+      aspect-ratio: 1;
+      display: grid;
+      place-items: center;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #f8f9fb;
+      font-size: 30px;
+      font-weight: 900;
+      font-variant-numeric: tabular-nums;
+    }
+    .dash { color: var(--muted); font-weight: 850; }
+    .prob-grid {
+      display: grid;
+      gap: 9px;
     }
     .prob {
       display: grid;
-      grid-template-columns: 110px 1fr 58px;
+      grid-template-columns: minmax(116px, .5fr) minmax(120px, 1fr) 62px;
       gap: 10px;
       align-items: center;
-      margin: 9px 0;
+    }
+    .prob-label {
+      min-width: 0;
+      overflow-wrap: anywhere;
     }
     .bar {
-      height: 12px;
-      background: #e9edf3;
-      border-radius: 999px;
+      height: 11px;
       overflow: hidden;
+      background: #e7ece8;
+      border-radius: 999px;
     }
-    .fill {
-      height: 100%;
-      background: var(--accent);
-    }
-    .stats {
+    .fill { height: 100%; background: var(--blue); }
+    .fill.draw { background: var(--amber); }
+    .fill.away { background: var(--green); }
+    .metric-grid {
       display: grid;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap: 10px;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 9px;
+      margin-top: 14px;
     }
-    .stat {
+    .metric {
       border: 1px solid var(--line);
-      border-radius: 6px;
-      padding: 10px;
-      min-height: 70px;
-      background: #fbfcfe;
+      border-radius: 8px;
+      padding: 9px;
+      min-height: 68px;
+      background: var(--surface-2);
     }
-    .stat .k {
+    .metric .k {
       color: var(--muted);
-      font-size: 12px;
+      font-size: 11px;
+      font-weight: 740;
+      text-transform: uppercase;
       margin-bottom: 5px;
     }
-    .stat .v {
+    .metric .v {
       font-size: 18px;
-      font-weight: 800;
+      font-weight: 850;
       overflow-wrap: anywhere;
+      font-variant-numeric: tabular-nums;
     }
-    .status-list {
+    .split {
       display: grid;
-      gap: 8px;
-      margin-bottom: 14px;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 14px;
     }
-    .status-row {
+    .list {
       display: grid;
-      grid-template-columns: 92px 1fr;
+      gap: 7px;
+    }
+    .row {
+      display: grid;
+      grid-template-columns: minmax(96px, .45fr) minmax(0, 1fr);
       gap: 10px;
-      align-items: baseline;
-      padding-bottom: 8px;
+      padding: 7px 0;
       border-bottom: 1px solid var(--line);
+      align-items: baseline;
     }
-    .status-row .k {
+    .row:last-child { border-bottom: 0; }
+    .row .k {
       color: var(--muted);
       font-size: 12px;
-      font-weight: 750;
+      font-weight: 760;
     }
-    .status-row .v {
+    .row .v {
+      min-width: 0;
       overflow-wrap: anywhere;
+      font-variant-numeric: tabular-nums;
     }
     table {
       width: 100%;
@@ -242,51 +287,49 @@ INDEX_HTML = """<!doctype html>
       border-bottom: 1px solid var(--line);
       padding: 8px 4px;
       text-align: left;
+      vertical-align: top;
     }
-    th { color: var(--muted); font-weight: 750; }
-    .message {
-      padding: 14px 16px;
-      border: 1px solid var(--line);
-      border-radius: 8px;
-      background: var(--panel);
+    th {
       color: var(--muted);
-    }
-    .error {
-      border-color: #f0b8b8;
-      color: #9a2b2b;
-      background: #fff8f8;
+      font-size: 11px;
+      font-weight: 760;
+      text-transform: uppercase;
     }
     .mono {
       font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
       font-size: 12px;
+      line-height: 1.45;
       white-space: pre-wrap;
       overflow-wrap: anywhere;
+      color: #2c3440;
     }
-    @media (max-width: 840px) {
-      .controls, .grid, .stats { grid-template-columns: 1fr; }
-      .score { align-items: stretch; }
-      .goals { width: 52px; }
+    .empty {
+      color: var(--muted);
+      padding: 10px 0;
+    }
+    @media (max-width: 980px) {
+      .toolbar, .layout, .split, .metric-grid { grid-template-columns: 1fr; }
+      .hero-score { grid-template-columns: 1fr; }
+      .score-box { justify-content: start; justify-items: start; grid-template-columns: auto auto auto; }
+      .prob { grid-template-columns: 1fr; gap: 5px; }
     }
   </style>
 </head>
 <body>
   <header>
-    <div class="wrap topbar">
-      <div>
-        <h1>World Cup 2026 Predictor</h1>
-        <div class="sub">Select a fixture, fetch live Polymarket prices, and blend them with the local model.</div>
-      </div>
+    <div class="shell topbar">
+      <h1>World Cup 2026 Predictor</h1>
     </div>
   </header>
-  <main class="wrap">
-    <section class="controls">
+  <main class="shell">
+    <section class="toolbar">
       <label>Match
         <select id="matchSelect"></select>
       </label>
       <label>Weights
         <select id="weightPreset">
-          <option value="0.3,0.7" selected>Live: 30 / 70</option>
-          <option value="0.4,0.6">Default: 40 / 60</option>
+          <option value="0.3,0.7" selected>Live 30 / 70</option>
+          <option value="0.4,0.6">Default 40 / 60</option>
           <option value="1,0">Model only</option>
           <option value="0,1">Market only</option>
           <option value="custom">Custom</option>
@@ -299,10 +342,10 @@ INDEX_HTML = """<!doctype html>
         <input id="marketWeight" type="number" min="0" max="100" step="5" value="70">
       </label>
       <button id="predictButton">Predict</button>
-      <button id="refreshButton" class="secondary">Reload Matches</button>
+      <button id="refreshButton" class="secondary">Reload</button>
     </section>
     <div id="status" class="message">Loading matches...</div>
-    <section id="result" class="grid" style="display:none"></section>
+    <section id="result" class="layout" style="display:none"></section>
   </main>
   <script>
     const select = document.getElementById("matchSelect");
@@ -322,6 +365,10 @@ INDEX_HTML = """<!doctype html>
       const number = Number(value || 0);
       return number.toFixed(digits);
     }
+    function whole(value) {
+      const number = Number(value || 0);
+      return Math.round(number).toLocaleString();
+    }
     function esc(value) {
       return String(value ?? "").replace(/[&<>"']/g, char => ({
         "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
@@ -332,16 +379,23 @@ INDEX_HTML = """<!doctype html>
       statusBox.className = isError ? "message error" : "message";
       statusBox.style.display = text ? "block" : "none";
     }
-    function probRow(label, value) {
-      return `<div class="prob"><div>${esc(label)}</div><div class="bar"><div class="fill" style="width:${Math.max(0, Math.min(100, Number(value || 0) * 100))}%"></div></div><strong>${pct(value)}</strong></div>`;
-    }
-    function stat(label, value) {
-      return `<div class="stat"><div class="k">${esc(label)}</div><div class="v">${esc(value)}</div></div>`;
-    }
     function parseJsonish(value, fallback) {
       if (!value) return fallback;
       if (typeof value !== "string") return value;
       try { return JSON.parse(value); } catch { return fallback; }
+    }
+    function metric(label, value) {
+      return `<div class="metric"><div class="k">${esc(label)}</div><div class="v">${esc(value)}</div></div>`;
+    }
+    function row(label, value) {
+      return `<div class="row"><div class="k">${esc(label)}</div><div class="v">${esc(value)}</div></div>`;
+    }
+    function pill(value) {
+      return `<span class="pill">${esc(value)}</span>`;
+    }
+    function probRow(label, value, cls = "") {
+      const width = Math.max(0, Math.min(100, Number(value || 0) * 100));
+      return `<div class="prob"><div class="prob-label">${esc(label)}</div><div class="bar"><div class="fill ${cls}" style="width:${width}%"></div></div><strong>${pct(value)}</strong></div>`;
     }
     function weights() {
       const model = Math.max(0, Number(modelWeight.value || 0)) / 100;
@@ -372,13 +426,13 @@ INDEX_HTML = """<!doctype html>
         option.textContent = `${match.match_id} · ${match.date} · ${match.home_team} vs ${match.away_team} · ${match.status}`;
         select.appendChild(option);
       });
-      setStatus(`${payload.matches.length} matches loaded. Historical rows used by model: ${payload.state.number_of_historical_matches_used}.`);
+      setStatus(`${payload.matches.length} matches loaded.`);
     }
     async function predict() {
       const matchId = select.value;
       if (!matchId) return;
       predictButton.disabled = true;
-      setStatus(`Fetching Polymarket and predicting ${matchId}...`);
+      setStatus(`Fetching market data and calculating ${matchId}...`);
       result.style.display = "none";
       try {
         const selectedWeights = weights();
@@ -390,7 +444,7 @@ INDEX_HTML = """<!doctype html>
         const response = await fetch(`/api/predict?${params.toString()}`);
         const payload = await response.json();
         if (!response.ok) throw new Error(payload.error || "Prediction failed");
-        render(payload);
+        render(payload.prediction);
         setStatus("");
       } catch (error) {
         setStatus(error.message, true);
@@ -398,60 +452,121 @@ INDEX_HTML = """<!doctype html>
         predictButton.disabled = false;
       }
     }
-    function render(payload) {
-      const pred = payload.prediction;
+    function marketRows(normalized, raw) {
+      if (!Object.keys(normalized).length) {
+        return `<tr><td colspan="3" class="empty">No accepted moneyline market</td></tr>`;
+      }
+      return Object.entries(normalized)
+        .map(([key, value]) => `<tr><td>${esc(key)}</td><td>${pct(value)}</td><td>${raw[key] == null ? "" : fixed(raw[key], 3)}</td></tr>`)
+        .join("");
+    }
+    function topScoreRows(top) {
+      if (!top.length) return `<tr><td colspan="3" class="empty">No scorelines</td></tr>`;
+      return top.map((item, idx) => `<tr><td>${idx + 1}</td><td>${esc(item.score)}</td><td>${pct(item.probability)}</td></tr>`).join("");
+    }
+    function totalLineRows(lines) {
+      if (!lines.length) return `<tr><td colspan="4" class="empty">No full-match totals used</td></tr>`;
+      return lines.map(item => `<tr><td>O/U ${esc(item.line)}</td><td>${pct(item.over_probability)}</td><td>${pct(item.over_price)}</td><td>${pct(item.under_price)}</td></tr>`).join("");
+    }
+    function spreadLineRows(lines) {
+      if (!lines.length) return `<tr><td colspan="4" class="empty">No full-match spreads used</td></tr>`;
+      return lines.map(item => `<tr><td>${esc(item.team)}</td><td>${Number(item.line).toFixed(1)}</td><td>${pct(item.cover_probability)}</td><td>${pct(item.price)}</td></tr>`).join("");
+    }
+    function render(pred) {
       const top = parseJsonish(pred.top_5_scorelines, []);
       const raw = parseJsonish(pred.moneyline_raw_prices, {});
       const normalized = parseJsonish(pred.moneyline_normalized_probabilities, {});
-      const topRows = top.map((row, idx) => `<tr><td>${idx + 1}</td><td>${esc(row.score)}</td><td>${pct(row.probability)}</td></tr>`).join("");
-      const marketRows = Object.keys(normalized).length
-        ? Object.entries(normalized).map(([key, value]) => `<tr><td>${esc(key)}</td><td>${pct(value)}</td><td>${raw[key] == null ? "" : fixed(raw[key], 3)}</td></tr>`).join("")
-        : `<tr><td colspan="3">No accepted moneyline market</td></tr>`;
+      const totalLines = parseJsonish(pred.total_lines_used, []);
+      const spreadLines = parseJsonish(pred.spread_lines_used, []);
+      const modelWeightText = `${pct(pred.model_weight)} model / ${pct(pred.moneyline_market_weight)} market`;
       result.innerHTML = `
-        <section class="panel">
-          <div class="meta">
-            <span class="pill">${esc(pred.match_id)}</span>
-            <span class="pill">${esc(pred.date)} ${esc(pred.kickoff_time)}</span>
-            <span class="pill">${esc(pred.stage || "Stage n/a")}</span>
-            <span class="pill">${esc(pred.status)}</span>
-          </div>
-          <div class="score">
-            <div class="team"><div class="name">${esc(pred.home_team)}</div><div class="sub">expected ${fixed(pred.expected_home_goals)}</div></div>
-            <div class="goals">${esc(pred.predicted_home_goals)}</div>
-            <div class="goals">${esc(pred.predicted_away_goals)}</div>
-            <div class="team"><div class="name">${esc(pred.away_team)}</div><div class="sub">expected ${fixed(pred.expected_away_goals)}</div></div>
-          </div>
-          <h2>Win / Draw / Loss</h2>
-          ${probRow(`${pred.home_team} win`, pred.home_win_prob)}
-          ${probRow("Draw", pred.draw_prob)}
-          ${probRow(`${pred.away_team} win`, pred.away_win_prob)}
-          <div class="stats" style="margin-top:14px">
-            ${stat("Confidence", fixed(pred.confidence, 2))}
-            ${stat("Weights", `${pct(pred.model_weight)} model / ${pct(pred.moneyline_market_weight)} market`)}
-            ${stat("Historical matches", pred.number_of_historical_matches_used)}
-            ${stat("Played WC 2026 matches used", pred.number_of_current_worldcup_matches_used)}
-          </div>
-        </section>
-        <aside class="panel">
-          <h2>Polymarket</h2>
-          <div class="status-list">
-            <div class="status-row"><div class="k">Moneyline</div><div class="v">${pred.moneyline_used ? "Used" : "Not used"}</div></div>
-            <div class="status-row"><div class="k">Total</div><div class="v">${pred.total_used ? `O/U ${esc(pred.total_line)} · over ${pct(pred.over_price)}` : "Not used"}</div></div>
-            <div class="status-row"><div class="k">Spread</div><div class="v">${pred.spread_used ? `${esc(pred.spread_team)} ${Number(pred.spread_line).toFixed(1)} · cover ${pct(pred.spread_price)}` : "Not used"}</div></div>
-            <div class="status-row"><div class="k">Source</div><div class="v">${esc(pred.market_source || "none")}</div></div>
-            <div class="status-row"><div class="k">Confidence</div><div class="v">${fixed(pred.market_match_confidence, 2)}</div></div>
-          </div>
-          <table>
-            <thead><tr><th>Outcome</th><th>Normalized</th><th>Raw</th></tr></thead>
-            <tbody>${marketRows}</tbody>
-          </table>
-          <h2 style="margin-top:18px">Top Scorelines</h2>
-          <table>
-            <thead><tr><th>#</th><th>Score</th><th>Probability</th></tr></thead>
-            <tbody>${topRows}</tbody>
-          </table>
-          <h2 style="margin-top:18px">Notes</h2>
-          <div class="mono">${esc(pred.notes || "none")}</div>
+        <div class="stack">
+          <section class="panel">
+            <div class="panel-head">
+              <h2>Prediction</h2>
+              <div class="pill-row">
+                ${pill(pred.stage || "Stage n/a")}
+              </div>
+            </div>
+            <div class="hero-score">
+              <div class="team-box">
+                <div class="team-name">${esc(pred.home_team)}</div>
+              </div>
+              <div class="score-box">
+                <div class="goal">${esc(pred.predicted_home_goals)}</div>
+                <div class="dash">-</div>
+                <div class="goal">${esc(pred.predicted_away_goals)}</div>
+              </div>
+              <div class="team-box">
+                <div class="team-name">${esc(pred.away_team)}</div>
+              </div>
+            </div>
+            <div class="prob-grid">
+              ${probRow(`${pred.home_team} win`, pred.home_win_prob)}
+              ${probRow("Draw", pred.draw_prob, "draw")}
+              ${probRow(`${pred.away_team} win`, pred.away_win_prob, "away")}
+            </div>
+            <div class="metric-grid">
+              ${metric("Confidence", fixed(pred.confidence, 2))}
+              ${metric("Blend", modelWeightText)}
+              ${metric("Market match", fixed(pred.market_match_confidence, 2))}
+              ${metric("WC games used", whole(pred.number_of_current_worldcup_matches_used))}
+            </div>
+          </section>
+          <section class="panel">
+            <div class="panel-head"><h2>Score Distribution</h2></div>
+            <table>
+              <thead><tr><th>#</th><th>Score</th><th>Probability</th></tr></thead>
+              <tbody>${topScoreRows(top)}</tbody>
+            </table>
+          </section>
+          <section class="panel">
+            <div class="panel-head"><h2>Team Evidence</h2></div>
+            <div class="split">
+              <div class="list">
+                ${row(pred.home_team, `${whole(pred.home_team_matches_used)} matches · ${fixed(pred.home_team_weighted_matches, 1)} recency-adjusted`)}
+                ${row("Goals for", fixed(pred.home_team_goals_for))}
+                ${row("Goals against", fixed(pred.home_team_goals_against))}
+              </div>
+              <div class="list">
+                ${row(pred.away_team, `${whole(pred.away_team_matches_used)} matches · ${fixed(pred.away_team_weighted_matches, 1)} recency-adjusted`)}
+                ${row("Goals for", fixed(pred.away_team_goals_for))}
+                ${row("Goals against", fixed(pred.away_team_goals_against))}
+              </div>
+            </div>
+            <div class="list" style="margin-top:12px">
+              ${row("Head-to-head", `${whole(pred.head_to_head_matches_used)} matches · ${pred.head_to_head_home_wins}-${pred.head_to_head_draws}-${pred.head_to_head_away_wins}`)}
+            </div>
+          </section>
+        </div>
+        <aside class="stack">
+          <section class="panel">
+            <div class="panel-head"><h2>Polymarket</h2></div>
+            <div class="list">
+              ${row("Moneyline", pred.moneyline_used ? "Used" : "Not used")}
+              ${row("Totals", pred.total_used ? pred.total_interpretation : "Not used")}
+              ${row("Spreads", pred.spread_used ? pred.spread_interpretation : "Not used")}
+              ${row("Source", pred.market_source || "none")}
+            </div>
+            <table style="margin-top:10px">
+              <thead><tr><th>Outcome</th><th>Normalized</th><th>Raw</th></tr></thead>
+              <tbody>${marketRows(normalized, raw)}</tbody>
+            </table>
+          </section>
+          <section class="panel">
+            <div class="panel-head"><h2>Totals Used</h2><span class="pill">each ${pct(pred.total_per_line_weight)}</span></div>
+            <table>
+              <thead><tr><th>Line</th><th>Over prob</th><th>Over raw</th><th>Under raw</th></tr></thead>
+              <tbody>${totalLineRows(totalLines)}</tbody>
+            </table>
+          </section>
+          <section class="panel">
+            <div class="panel-head"><h2>Spreads Used</h2><span class="pill">each ${pct(pred.spread_per_line_weight)}</span></div>
+            <table>
+              <thead><tr><th>Team</th><th>Line</th><th>Cover prob</th><th>Raw</th></tr></thead>
+              <tbody>${spreadLineRows(spreadLines)}</tbody>
+            </table>
+          </section>
         </aside>`;
       result.style.display = "grid";
     }

@@ -48,8 +48,9 @@ For each selected scheduled match, the program:
 4. Updates Elo dynamically with played World Cup 2026 matches.
 5. Estimates attacking and defensive strength from recent weighted results.
 6. Builds a Poisson score model.
-7. Fetches Polymarket moneyline markets.
-8. Blends probabilities with the standard default weights:
+7. Fetches Polymarket moneyline, total-goals, and spread markets when available.
+8. Uses totals and spreads to calibrate the score matrix.
+9. Blends win/draw/loss probabilities with the standard default weights:
 
 ```text
 40% statistical model
@@ -65,6 +66,9 @@ away_score=<away goals>
 ```
 
 Future predictions for both teams will then include that played match.
+
+For historical evaluation, the CLI uses an as-of boundary so later matches are
+not allowed to influence earlier predictions.
 
 ## Polymarket Fetching
 
@@ -100,19 +104,22 @@ https://clob.polymarket.com/book?token_id=<clobTokenId>
 
 5. Uses best bid and best ask midpoint when the spread is acceptable.
 
-For `M001`, the useful markets are the three binary moneyline markets:
+For `M001`, the useful moneyline markets are the three binary outcome markets:
 
 - Will Mexico win?
 - Will the match end in a draw?
 - Will South Africa win?
 
 The model normalizes those three implied probabilities into home/draw/away probabilities.
+Full-match over/under and spread markets are also parsed when available. Totals
+push probability mass toward lower or higher aggregate scorelines; spreads push
+probability mass toward scorelines where the selected team covers the line. The
+final moneyline calibration is applied last so the displayed score does not
+contradict the displayed win/draw/loss probabilities.
 
-Over/under and spread markets are discovered and classified by the Polymarket
-client, but current predictions only use moneyline odds. Totals should calibrate
-the score matrix and expected total goals rather than directly replace W/D/L
-probabilities, so they are intentionally kept out of the main prediction blend
-until their matching and calibration are reviewed.
+The market-line weights are still heuristic. Use the backtest command below to
+evaluate the statistical model; validating market weights properly requires
+saved historical market snapshots.
 
 If exact slug lookup fails, the client falls back to paginated Gamma event discovery:
 
@@ -145,6 +152,15 @@ Debug Polymarket matching:
 ```bash
 python3 -m src.cli debug-polymarket --match-id M001
 ```
+
+Run a walk-forward backtest of the statistical model:
+
+```bash
+python3 -m src.cli backtest --max-matches 250 --min-training-matches 250
+```
+
+This backtest does not include Polymarket because the project currently fetches
+live odds only and does not store historical market snapshots.
 
 Regenerate cleaned historical data from the local raw file:
 

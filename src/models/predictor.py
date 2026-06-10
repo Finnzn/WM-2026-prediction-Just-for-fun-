@@ -36,38 +36,48 @@ class ModelState:
     number_of_historical_matches_used: int
     number_of_current_worldcup_matches_used: int
     older_data_priors_used: bool
+    as_of_date: str
+    as_of_exclusive: bool
 
 
-def build_state(cfg: Config | None = None) -> ModelState:
+def build_state(cfg: Config | None = None, as_of: date | str | None = None, exclusive: bool = False) -> ModelState:
     cfg = cfg or Config()
     mapper = TeamNameMapper(cfg.team_mapping_path)
     schedule = load_schedule(cfg.schedule_path, mapper)
     historical_path = cfg.clean_historical_results_path if cfg.clean_historical_results_path.exists() else cfg.historical_results_path
     historical = load_historical_results(historical_path, mapper)
+    as_of_ts = pd.to_datetime(as_of, errors="coerce") if as_of is not None else pd.NaT
+    as_of_date = None if pd.isna(as_of_ts) else as_of_ts.date()
     current_wc = played_worldcup_results(schedule)
-    effective = effective_results(historical, current_wc, cfg)
+    effective = effective_results(historical, current_wc, cfg, as_of=as_of_date, exclusive=exclusive)
     teams = set(schedule["home_team"]) | set(schedule["away_team"]) | set(effective["home_team"]) | set(effective["away_team"])
     base_elo = load_elo_ratings(cfg, mapper, {str(team) for team in teams if team})
-    elo = update_dynamic_elo(base_elo, current_wc, cfg)
+    elo_current = current_wc.copy()
+    if as_of_date is not None and not elo_current.empty:
+        dates = pd.to_datetime(elo_current["date"], errors="coerce")
+        elo_current = elo_current[dates.lt(pd.Timestamp(as_of_date)) if exclusive else dates.le(pd.Timestamp(as_of_date))].copy()
+    elo = update_dynamic_elo(base_elo, elo_current, cfg)
     stats = team_recent_stats(effective)
     if effective.empty:
         start = end = ""
     else:
         start = pd.to_datetime(effective["date"]).min().date().isoformat()
         end = pd.to_datetime(effective["date"]).max().date().isoformat()
-    historical_used = len(effective) - len(current_wc)
+    historical_used = len(effective) - len(elo_current)
     return ModelState(
         schedule=schedule,
         historical=historical,
-        current_worldcup=current_wc,
+        current_worldcup=elo_current,
         effective_results=effective,
         elo_ratings=elo,
         team_stats=stats,
         training_data_start_date=start,
         training_data_end_date=end,
         number_of_historical_matches_used=historical_used,
-        number_of_current_worldcup_matches_used=len(current_wc),
+        number_of_current_worldcup_matches_used=len(elo_current),
         older_data_priors_used=cfg.use_older_data_as_prior,
+        as_of_date=as_of_date.isoformat() if as_of_date is not None else "",
+        as_of_exclusive=exclusive,
     )
 
 
@@ -79,6 +89,27 @@ def skip_reason(row: pd.Series) -> str | None:
     if is_placeholder_team(row.get("home_team")) or is_placeholder_team(row.get("away_team")):
         return "unresolved placeholder team"
     return None
+
+
+def _head_to_head_summary(results: pd.DataFrame, home: str, away: str) -> dict[str, Any]:
+    if results.empty:
+        return {"matches": 0, "home_wins": 0, "draws": 0, "away_wins": 0}
+    pair = results[
+        ((results["home_team"].eq(home)) & (results["away_team"].eq(away)))
+        | ((results["home_team"].eq(away)) & (results["away_team"].eq(home)))
+    ].copy()
+    home_wins = draws = away_wins = 0
+    for row in pair.itertuples(index=False):
+        home_score = int(row.home_score)
+        away_score = int(row.away_score)
+        listed_home = str(row.home_team)
+        if home_score == away_score:
+            draws += 1
+        elif (home_score > away_score and listed_home == home) or (home_score < away_score and listed_home == away):
+            home_wins += 1
+        else:
+            away_wins += 1
+    return {"matches": int(len(pair)), "home_wins": home_wins, "draws": draws, "away_wins": away_wins}
 
 
 def predict_match_row(
@@ -210,6 +241,9 @@ def predict_match_row(
         market_used,
         market_conf,
     )
+    home_stats = state.team_stats.get(home, {})
+    away_stats = state.team_stats.get(away, {})
+    h2h = _head_to_head_summary(state.effective_results, home, away)
     pred["top_5_scorelines"] = json_dumps(pred["top_5_scorelines"])
     pred.update(
         {
@@ -241,6 +275,8 @@ def predict_match_row(
                 if spread_info
                 else ""
             ),
+            "spread_lines_used": json_dumps(spread_info.get("lines_used", [])) if spread_info else "",
+            "spread_per_line_weight": spread_info.get("per_line_weight", ""),
             "total_used": total_used,
             "total_line": total_info.get("line", ""),
             "over_price": total_info.get("over_price", ""),
@@ -250,13 +286,29 @@ def predict_match_row(
                 if total_info
                 else ""
             ),
+            "total_lines_used": json_dumps(total_info.get("lines_used", [])) if total_info else "",
+            "total_per_line_weight": total_info.get("per_line_weight", ""),
             "market_match_confidence": market_conf,
             "market_type": "three_way_moneyline" if moneyline_used else "none",
             "training_data_start_date": state.training_data_start_date,
             "training_data_end_date": state.training_data_end_date,
             "number_of_historical_matches_used": state.number_of_historical_matches_used,
             "number_of_current_worldcup_matches_used": state.number_of_current_worldcup_matches_used,
+            "home_team_matches_used": home_stats.get("matches", 0.0),
+            "away_team_matches_used": away_stats.get("matches", 0.0),
+            "home_team_weighted_matches": home_stats.get("weighted_matches", 0.0),
+            "away_team_weighted_matches": away_stats.get("weighted_matches", 0.0),
+            "home_team_goals_for": home_stats.get("goals_for", 0.0),
+            "away_team_goals_for": away_stats.get("goals_for", 0.0),
+            "home_team_goals_against": home_stats.get("goals_against", 0.0),
+            "away_team_goals_against": away_stats.get("goals_against", 0.0),
+            "head_to_head_matches_used": h2h["matches"],
+            "head_to_head_home_wins": h2h["home_wins"],
+            "head_to_head_draws": h2h["draws"],
+            "head_to_head_away_wins": h2h["away_wins"],
             "older_data_priors_used": state.older_data_priors_used,
+            "as_of_date": state.as_of_date,
+            "as_of_exclusive": state.as_of_exclusive,
             "data_sources_used": "historical_results,schedule,provided_elo,dynamic_elo"
             + (",market_moneyline" if moneyline_used else "")
             + (",market_spread" if spread_used else "")

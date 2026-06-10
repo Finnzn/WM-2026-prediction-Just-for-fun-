@@ -11,7 +11,7 @@ from src.data_sources.historical_results import load_historical_results
 from src.data_sources.polymarket import PolymarketClient, PolymarketDebugCandidate
 from src.data_sources.schedule import load_schedule, validate_schedule
 from src.data_sources.team_mapping import TeamNameMapper
-from src.models.backtesting import simple_backtest
+from src.models.backtesting import simple_backtest, walk_forward_model_backtest
 from src.models.predictor import build_state, predict_all, predict_match_row, prediction_report, skip_reason
 
 
@@ -23,10 +23,16 @@ OUTPUT_COLUMNS = [
     "total_calibration_weight", "market_data_used", "market_source", "market_timestamp",
     "market_age_minutes", "moneyline_used", "moneyline_raw_prices",
     "moneyline_normalized_probabilities", "spread_used", "spread_team", "spread_line",
-    "spread_price", "spread_interpretation", "total_used", "total_line", "over_price",
-    "under_price", "total_interpretation", "market_match_confidence", "market_type",
+    "spread_price", "spread_interpretation", "spread_lines_used", "spread_per_line_weight",
+    "total_used", "total_line", "over_price", "under_price", "total_interpretation",
+    "total_lines_used", "total_per_line_weight", "market_match_confidence", "market_type",
     "training_data_start_date", "training_data_end_date", "number_of_historical_matches_used",
-    "number_of_current_worldcup_matches_used", "older_data_priors_used", "data_sources_used", "notes",
+    "number_of_current_worldcup_matches_used", "home_team_matches_used", "away_team_matches_used",
+    "home_team_weighted_matches", "away_team_weighted_matches", "home_team_goals_for",
+    "away_team_goals_for", "home_team_goals_against", "away_team_goals_against",
+    "head_to_head_matches_used", "head_to_head_home_wins", "head_to_head_draws",
+    "head_to_head_away_wins", "older_data_priors_used", "as_of_date", "as_of_exclusive",
+    "data_sources_used", "notes",
 ]
 
 
@@ -118,6 +124,10 @@ def predict_match_command(args: argparse.Namespace) -> int:
     if reason and not args.backtest_played:
         print(f"Skipping {args.match_id}: {reason}")
         return 1
+    if args.backtest_played:
+        state = build_state(as_of=row.get("date", ""), exclusive=True)
+        rows = state.schedule[state.schedule["match_id"].eq(args.match_id)]
+        row = rows.iloc[0]
     pred = predict_match_row(row, state, Config(), **_predict_kwargs(args))
     print(prediction_report(pred))
     return 0
@@ -210,12 +220,20 @@ def debug_polymarket_command(args: argparse.Namespace) -> int:
     return 0
 
 
-def backtest_command(_: argparse.Namespace) -> int:
+def backtest_command(args: argparse.Namespace) -> int:
     cfg = Config()
     mapper = TeamNameMapper(cfg.team_mapping_path)
     path = cfg.clean_historical_results_path if cfg.clean_historical_results_path.exists() else cfg.historical_results_path
     results = load_historical_results(path, mapper)
-    metrics = simple_backtest(results)
+    if args.baseline:
+        metrics = simple_backtest(results)
+    else:
+        metrics = walk_forward_model_backtest(
+            results,
+            cfg,
+            min_training_matches=args.min_training_matches,
+            max_evaluated_matches=args.max_matches,
+        )
     print(json.dumps(metrics, indent=2))
     return 0
 
@@ -272,7 +290,11 @@ def build_parser() -> argparse.ArgumentParser:
     debug_pm.add_argument("--match-id", required=True)
     debug_pm.add_argument("--max-pages", type=int, default=30)
     debug_pm.set_defaults(func=debug_polymarket_command)
-    sub.add_parser("backtest").set_defaults(func=backtest_command)
+    backtest = sub.add_parser("backtest")
+    backtest.add_argument("--baseline", action="store_true")
+    backtest.add_argument("--min-training-matches", type=int, default=250)
+    backtest.add_argument("--max-matches", type=int, default=250)
+    backtest.set_defaults(func=backtest_command)
     sub.add_parser("export").set_defaults(func=export_command)
     return parser
 

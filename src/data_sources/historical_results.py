@@ -43,13 +43,26 @@ def add_time_weights(df: pd.DataFrame, cfg: Config, as_of: date | None = None) -
     return df
 
 
-def effective_results(historical: pd.DataFrame, current_worldcup: pd.DataFrame, cfg: Config) -> pd.DataFrame:
-    hist = add_time_weights(historical, cfg)
+def effective_results(
+    historical: pd.DataFrame,
+    current_worldcup: pd.DataFrame,
+    cfg: Config,
+    as_of: date | None = None,
+    exclusive: bool = False,
+) -> pd.DataFrame:
+    hist = historical.copy()
+    if as_of is not None:
+        as_of_ts = pd.Timestamp(as_of)
+        hist = hist[hist["date"].lt(as_of_ts) if exclusive else hist["date"].le(as_of_ts)].copy()
+    hist = add_time_weights(hist, cfg, as_of=as_of)
     wc = current_worldcup.copy()
     if wc.empty:
         return hist.reset_index(drop=True)
     if not wc.empty:
         wc["date"] = pd.to_datetime(wc["date"], errors="coerce")
+        if as_of is not None:
+            as_of_ts = pd.Timestamp(as_of)
+            wc = wc[wc["date"].lt(as_of_ts) if exclusive else wc["date"].le(as_of_ts)].copy()
         wc["home_score"] = pd.to_numeric(wc["home_score"], errors="coerce")
         wc["away_score"] = pd.to_numeric(wc["away_score"], errors="coerce")
         wc = wc.dropna(subset=["date", "home_score", "away_score"]).copy()

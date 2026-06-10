@@ -43,7 +43,7 @@ def prediction_from_lambdas(lambda_home: float, lambda_away: float, max_goals: i
 def prediction_from_matrix(matrix: np.ndarray) -> dict:
     home_win, draw, away_win = matrix_to_wdl(matrix)
     top = top_scorelines(matrix, 5)
-    best = top[0]
+    best = representative_scoreline(matrix, (home_win, draw, away_win))
     expected_home = float(sum(i * matrix[i, :].sum() for i in range(matrix.shape[0])))
     expected_away = float(sum(j * matrix[:, j].sum() for j in range(matrix.shape[1])))
     return {
@@ -59,3 +59,21 @@ def prediction_from_matrix(matrix: np.ndarray) -> dict:
         "top_5_scorelines": top,
         "tail_probability": max(0.0, 1.0 - float(matrix.sum())),
     }
+
+
+def representative_scoreline(matrix: np.ndarray, probs: tuple[float, float, float]) -> dict:
+    outcome = max(range(3), key=lambda idx: probs[idx])
+    rows: list[tuple[float, int, int]] = []
+    for home_goals in range(matrix.shape[0]):
+        for away_goals in range(matrix.shape[1]):
+            if outcome == 0 and home_goals <= away_goals:
+                continue
+            if outcome == 1 and home_goals != away_goals:
+                continue
+            if outcome == 2 and home_goals >= away_goals:
+                continue
+            rows.append((float(matrix[home_goals, away_goals]), home_goals, away_goals))
+    if not rows:
+        return top_scorelines(matrix, 1)[0]
+    prob, home_goals, away_goals = max(rows)
+    return {"score": f"{home_goals}-{away_goals}", "home_score": home_goals, "away_score": away_goals, "probability": prob}
