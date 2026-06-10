@@ -669,10 +669,14 @@ class PolymarketClient:
     ) -> dict[str, Any]:
         # `refresh` is kept for CLI compatibility; Gamma/CLOB calls are live.
         debug = self.discover_match_markets(home_team, away_team, match_date, max_pages=30, refresh=refresh)
+        totals = self._best_totals_from_debug(debug)
+        spreads = self._best_spreads_from_debug(debug, home_team, away_team)
         return {
             "moneyline": self._best_moneyline_from_debug(debug, home_team, away_team),
-            "total": self._best_total_from_debug(debug),
-            "spread": self._best_spread_from_debug(debug, home_team, away_team),
+            "total": totals[0] if totals else None,
+            "totals": totals,
+            "spread": spreads[0] if spreads else None,
+            "spreads": spreads,
         }
 
     def _best_moneyline_from_debug(
@@ -727,63 +731,99 @@ class PolymarketClient:
         return None
 
     def _best_total_from_debug(self, debug: PolymarketDebugReport) -> dict[str, Any] | None:
+        totals = self._best_totals_from_debug(debug)
+        return totals[0] if totals else None
+
+    def _best_totals_from_debug(self, debug: PolymarketDebugReport, max_lines: int = 6) -> list[dict[str, Any]]:
         candidates = [
             candidate
             for candidate in debug.candidates
             if candidate.accepted and is_full_match_total(candidate)
         ]
         if not candidates:
-            return None
-        # The 2.5 line is the most standard soccer total. If unavailable, use the most central line.
-        candidate = sorted(candidates, key=lambda item: (abs((item.total_line or 0) - 2.5), -item.fuzzy_score))[0]
-        over = next((token for token in candidate.tokens if norm(token.outcome) == "over" and token.implied_probability is not None), None)
-        under = next((token for token in candidate.tokens if norm(token.outcome) == "under" and token.implied_probability is not None), None)
-        if not over:
-            return None
-        over_prob = over.implied_probability
-        under_prob = under.implied_probability if under else None
-        if under_prob is not None:
-            over_prob, under_prob = normalize_probabilities([over_prob, under_prob])
-        return {
-            "line": candidate.total_line,
-            "over_price": over.implied_probability,
-            "under_price": under.implied_probability if under else None,
-            "over_probability": over_prob,
-            "under_probability": under_prob,
-            "market_question": candidate.market_question,
-            "market_slug": candidate.market_slug,
-            "confidence": candidate.fuzzy_score,
-        }
+            return []
+        selected: list[dict[str, Any]] = []
+        seen_lines: set[float] = set()
+        # Start near 2.5, then add surrounding lines to shape the whole totals curve.
+        for candidate in sorted(candidates, key=lambda item: (abs((item.total_line or 0) - 2.5), item.total_line or 0)):
+            line = candidate.total_line
+            if line is None or line in seen_lines:
+                continue
+            over = next((token for token in candidate.tokens if norm(token.outcome) == "over" and token.implied_probability is not None), None)
+            under = next((token for token in candidate.tokens if norm(token.outcome) == "under" and token.implied_probability is not None), None)
+            if not over:
+                continue
+            over_prob = over.implied_probability
+            under_prob = under.implied_probability if under else None
+            if under_prob is not None:
+                over_prob, under_prob = normalize_probabilities([over_prob, under_prob])
+            seen_lines.add(line)
+            selected.append(
+                {
+                    "line": line,
+                    "over_price": over.implied_probability,
+                    "under_price": under.implied_probability if under else None,
+                    "over_probability": over_prob,
+                    "under_probability": under_prob,
+                    "market_question": candidate.market_question,
+                    "market_slug": candidate.market_slug,
+                    "confidence": candidate.fuzzy_score,
+                }
+            )
+            if len(selected) >= max_lines:
+                break
+        return selected
 
     def _best_spread_from_debug(self, debug: PolymarketDebugReport, home_team: str, away_team: str) -> dict[str, Any] | None:
+        spreads = self._best_spreads_from_debug(debug, home_team, away_team)
+        return spreads[0] if spreads else None
+
+    def _best_spreads_from_debug(
+        self,
+        debug: PolymarketDebugReport,
+        home_team: str,
+        away_team: str,
+        max_lines: int = 4,
+    ) -> list[dict[str, Any]]:
         candidates = [
             candidate
             for candidate in debug.candidates
             if candidate.accepted and is_full_match_spread(candidate)
         ]
         if not candidates:
-            return None
-        # Prefer the closest-to-even handicap because it carries the cleanest margin signal.
-        candidate = sorted(candidates, key=lambda item: (abs(item.spread_line or 0), -item.fuzzy_score))[0]
-        first = next((token for token in candidate.tokens if token.implied_probability is not None), None)
-        if first is None:
-            return None
-        team = first.outcome
-        team_key = classify_outcome(team, home_team, away_team)
-        if team_key not in {"home_win", "away_win"}:
-            return None
-        second = next((token for token in candidate.tokens if token is not first and token.implied_probability is not None), None)
-        cover_prob = first.implied_probability
-        other_prob = second.implied_probability if second else None
-        if other_prob is not None:
-            cover_prob, _ = normalize_probabilities([cover_prob, other_prob])
-        return {
-            "team": home_team if team_key == "home_win" else away_team,
-            "team_is_home": team_key == "home_win",
-            "line": candidate.spread_line,
-            "price": first.implied_probability,
-            "cover_probability": cover_prob,
-            "market_question": candidate.market_question,
-            "market_slug": candidate.market_slug,
-            "confidence": candidate.fuzzy_score,
-        }
+            return []
+        selected: list[dict[str, Any]] = []
+        seen: set[tuple[str, float]] = set()
+        # Use closest-to-zero lines first; they carry the most stable margin information.
+        for candidate in sorted(candidates, key=lambda item: (abs(item.spread_line or 0), item.spread_line or 0, -item.fuzzy_score)):
+            first = next((token for token in candidate.tokens if token.implied_probability is not None), None)
+            if first is None or candidate.spread_line is None:
+                continue
+            team = first.outcome
+            team_key = classify_outcome(team, home_team, away_team)
+            if team_key not in {"home_win", "away_win"}:
+                continue
+            key = (team_key, candidate.spread_line)
+            if key in seen:
+                continue
+            second = next((token for token in candidate.tokens if token is not first and token.implied_probability is not None), None)
+            cover_prob = first.implied_probability
+            other_prob = second.implied_probability if second else None
+            if other_prob is not None:
+                cover_prob, _ = normalize_probabilities([cover_prob, other_prob])
+            seen.add(key)
+            selected.append(
+                {
+                    "team": home_team if team_key == "home_win" else away_team,
+                    "team_is_home": team_key == "home_win",
+                    "line": candidate.spread_line,
+                    "price": first.implied_probability,
+                    "cover_probability": cover_prob,
+                    "market_question": candidate.market_question,
+                    "market_slug": candidate.market_slug,
+                    "confidence": candidate.fuzzy_score,
+                }
+            )
+            if len(selected) >= max_lines:
+                break
+        return selected

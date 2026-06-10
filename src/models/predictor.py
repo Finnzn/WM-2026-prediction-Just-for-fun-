@@ -119,44 +119,56 @@ def predict_match_row(
         polymarket = PolymarketClient(cfg)
         market_signals = polymarket.best_markets_for_match(home, away, str(row.get("date", "")), refresh=refresh_markets)
         pm = market_signals.get("moneyline")
-        total_signal = market_signals.get("total")
-        spread_signal = market_signals.get("spread")
-        if total_signal:
-            matrix = calibrate_total(
-                matrix,
-                float(total_signal["line"]),
-                float(total_signal["over_probability"]),
-                cfg.total_calibration_weight,
-            )
+        total_signals = market_signals.get("totals") or []
+        spread_signals = market_signals.get("spreads") or []
+        total_weight = min(cfg.total_calibration_weight / max(1, len(total_signals)), 0.08)
+        spread_weight = min(cfg.spread_calibration_weight / max(1, len(spread_signals)), 0.06)
+        if total_signals:
+            total_notes: list[str] = []
+            for total_signal in total_signals:
+                matrix = calibrate_total(
+                    matrix,
+                    float(total_signal["line"]),
+                    float(total_signal["over_probability"]),
+                    total_weight,
+                )
+                total_notes.append(f"{total_signal['line']}={float(total_signal['over_probability']):.1%}")
             total_used = True
-            total_info = total_signal
+            total_info = total_signals[0] | {"lines_used": total_signals, "per_line_weight": total_weight}
             market_used = True
             market_source = "polymarket_gamma_events_clob"
             market_timestamp = datetime_now_iso()
             market_age_minutes = 0.0
-            market_conf = max(market_conf, float(total_signal.get("confidence", 0.0)))
+            market_conf = max(market_conf, max(float(item.get("confidence", 0.0)) for item in total_signals))
             notes.append(
-                f"Polymarket total calibrated: O/U {total_signal['line']} "
-                f"over={float(total_signal['over_probability']):.1%}"
+                "Polymarket totals calibrated: "
+                + ", ".join(total_notes)
+                + f" (weight each {total_weight:.2f})"
             )
-        if spread_signal:
-            matrix = calibrate_spread(
-                matrix,
-                bool(spread_signal["team_is_home"]),
-                float(spread_signal["line"]),
-                float(spread_signal["cover_probability"]),
-                cfg.spread_calibration_weight,
-            )
+        if spread_signals:
+            spread_notes: list[str] = []
+            for spread_signal in spread_signals:
+                matrix = calibrate_spread(
+                    matrix,
+                    bool(spread_signal["team_is_home"]),
+                    float(spread_signal["line"]),
+                    float(spread_signal["cover_probability"]),
+                    spread_weight,
+                )
+                spread_notes.append(
+                    f"{spread_signal['team']} {float(spread_signal['line']):+g}={float(spread_signal['cover_probability']):.1%}"
+                )
             spread_used = True
-            spread_info = spread_signal
+            spread_info = spread_signals[0] | {"lines_used": spread_signals, "per_line_weight": spread_weight}
             market_used = True
             market_source = "polymarket_gamma_events_clob"
             market_timestamp = datetime_now_iso()
             market_age_minutes = 0.0
-            market_conf = max(market_conf, float(spread_signal.get("confidence", 0.0)))
+            market_conf = max(market_conf, max(float(item.get("confidence", 0.0)) for item in spread_signals))
             notes.append(
-                f"Polymarket spread calibrated: {spread_signal['team']} "
-                f"{float(spread_signal['line']):+g} cover={float(spread_signal['cover_probability']):.1%}"
+                "Polymarket spreads calibrated: "
+                + ", ".join(spread_notes)
+                + f" (weight each {spread_weight:.2f})"
             )
         if pm:
             market_probs = (
@@ -225,7 +237,7 @@ def predict_match_row(
             "spread_line": spread_info.get("line", ""),
             "spread_price": spread_info.get("price", ""),
             "spread_interpretation": (
-                f"{spread_info.get('team', '')} {float(spread_info.get('line')):+g} cover probability"
+                f"{len(spread_info.get('lines_used', [spread_info]))} full-match spread line(s) calibrated"
                 if spread_info
                 else ""
             ),
@@ -234,7 +246,7 @@ def predict_match_row(
             "over_price": total_info.get("over_price", ""),
             "under_price": total_info.get("under_price", ""),
             "total_interpretation": (
-                f"Full-match total O/U {total_info.get('line')} over probability"
+                f"{len(total_info.get('lines_used', [total_info]))} full-match total line(s) calibrated"
                 if total_info
                 else ""
             ),
