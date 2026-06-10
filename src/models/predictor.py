@@ -14,9 +14,12 @@ from src.data_sources.polymarket import PolymarketClient
 from src.data_sources.schedule import load_schedule, played_worldcup_results
 from src.data_sources.team_mapping import TeamNameMapper
 from src.markets.moneyline import blend_moneyline
+from src.markets.spread import calibrate_spread
+from src.markets.totals import calibrate_total
+from src.markets.wdl import calibrate_wdl
 from src.models.confidence import confidence_score
 from src.models.feature_engineering import global_goal_rates, team_recent_stats
-from src.models.poisson_model import estimate_lambdas, prediction_from_lambdas
+from src.models.poisson_model import estimate_lambdas, prediction_from_lambdas, prediction_from_matrix
 from src.utils import is_placeholder_team, json_dumps, matrix_to_wdl
 
 
@@ -105,12 +108,56 @@ def predict_match_row(
     normalized_market: dict[str, float] | str = ""
     market_conf = 0.0
     moneyline_used = False
+    spread_used = False
+    total_used = False
+    spread_info: dict[str, Any] = {}
+    total_info: dict[str, Any] = {}
     notes: list[str] = []
     mw = 1.0 if model_weight is None else model_weight
     kw = 0.0 if market_weight is None else market_weight
     if not no_markets and cfg.use_polymarket:
         polymarket = PolymarketClient(cfg)
-        pm = polymarket.best_moneyline_for_match(home, away, str(row.get("date", "")), refresh=refresh_markets)
+        market_signals = polymarket.best_markets_for_match(home, away, str(row.get("date", "")), refresh=refresh_markets)
+        pm = market_signals.get("moneyline")
+        total_signal = market_signals.get("total")
+        spread_signal = market_signals.get("spread")
+        if total_signal:
+            matrix = calibrate_total(
+                matrix,
+                float(total_signal["line"]),
+                float(total_signal["over_probability"]),
+                cfg.total_calibration_weight,
+            )
+            total_used = True
+            total_info = total_signal
+            market_used = True
+            market_source = "polymarket_gamma_events_clob"
+            market_timestamp = datetime_now_iso()
+            market_age_minutes = 0.0
+            market_conf = max(market_conf, float(total_signal.get("confidence", 0.0)))
+            notes.append(
+                f"Polymarket total calibrated: O/U {total_signal['line']} "
+                f"over={float(total_signal['over_probability']):.1%}"
+            )
+        if spread_signal:
+            matrix = calibrate_spread(
+                matrix,
+                bool(spread_signal["team_is_home"]),
+                float(spread_signal["line"]),
+                float(spread_signal["cover_probability"]),
+                cfg.spread_calibration_weight,
+            )
+            spread_used = True
+            spread_info = spread_signal
+            market_used = True
+            market_source = "polymarket_gamma_events_clob"
+            market_timestamp = datetime_now_iso()
+            market_age_minutes = 0.0
+            market_conf = max(market_conf, float(spread_signal.get("confidence", 0.0)))
+            notes.append(
+                f"Polymarket spread calibrated: {spread_signal['team']} "
+                f"{float(spread_signal['line']):+g} cover={float(spread_signal['cover_probability']):.1%}"
+            )
         if pm:
             market_probs = (
                 pm["normalized"]["home_win"],
@@ -124,16 +171,21 @@ def predict_match_row(
             if market_weight is not None:
                 kw = market_weight
             blended = blend_moneyline(model_probs, market_probs, mw, kw)
-            pred["home_win_prob"], pred["draw_prob"], pred["away_win_prob"] = blended
+            matrix = calibrate_wdl(matrix, blended)
+            pred = prediction_from_matrix(matrix)
+            matrix = pred.pop("matrix")
             market_used = True
             moneyline_used = True
             market_source = pm["source"]
             market_timestamp = pm["timestamp"]
             market_age_minutes = pm["age_minutes"]
-            raw_prices = pm["raw"]
-            normalized_market = pm["normalized"]
-            market_conf = pm["confidence"]
+            raw_prices = pm.get("raw_by_team", pm["raw"])
+            normalized_market = pm.get("normalized_by_team", pm["normalized"])
+            market_conf = max(market_conf, pm["confidence"])
             notes.append(f"automatic Polymarket moneyline used: {pm.get('title') or pm.get('slug')}")
+        elif total_used or spread_used:
+            pred = prediction_from_matrix(matrix)
+            matrix = pred.pop("matrix")
     if not market_used:
         mw = 1.0 if model_weight is None else model_weight
         kw = 0.0 if market_weight is None else market_weight
@@ -168,16 +220,24 @@ def predict_match_row(
             "moneyline_used": moneyline_used,
             "moneyline_raw_prices": json_dumps(raw_prices) if raw_prices else "",
             "moneyline_normalized_probabilities": json_dumps(normalized_market) if normalized_market else "",
-            "spread_used": False,
-            "spread_team": "",
-            "spread_line": "",
-            "spread_price": "",
-            "spread_interpretation": "",
-            "total_used": False,
-            "total_line": "",
-            "over_price": "",
-            "under_price": "",
-            "total_interpretation": "",
+            "spread_used": spread_used,
+            "spread_team": spread_info.get("team", ""),
+            "spread_line": spread_info.get("line", ""),
+            "spread_price": spread_info.get("price", ""),
+            "spread_interpretation": (
+                f"{spread_info.get('team', '')} {float(spread_info.get('line')):+g} cover probability"
+                if spread_info
+                else ""
+            ),
+            "total_used": total_used,
+            "total_line": total_info.get("line", ""),
+            "over_price": total_info.get("over_price", ""),
+            "under_price": total_info.get("under_price", ""),
+            "total_interpretation": (
+                f"Full-match total O/U {total_info.get('line')} over probability"
+                if total_info
+                else ""
+            ),
             "market_match_confidence": market_conf,
             "market_type": "three_way_moneyline" if moneyline_used else "none",
             "training_data_start_date": state.training_data_start_date,
@@ -186,12 +246,18 @@ def predict_match_row(
             "number_of_current_worldcup_matches_used": state.number_of_current_worldcup_matches_used,
             "older_data_priors_used": state.older_data_priors_used,
             "data_sources_used": "historical_results,schedule,provided_elo,dynamic_elo"
-            + (",market_moneyline" if market_used else ""),
+            + (",market_moneyline" if moneyline_used else "")
+            + (",market_spread" if spread_used else "")
+            + (",market_total" if total_used else ""),
             "notes": "; ".join(notes),
         }
     )
     pred["predicted_score"] = f"{home} {pred['predicted_home_goals']} - {pred['predicted_away_goals']} {away}"
     return pred
+
+
+def datetime_now_iso() -> str:
+    return pd.Timestamp.utcnow().isoformat()
 
 
 def predict_all(state: ModelState, cfg: Config | None = None, **kwargs: Any) -> tuple[pd.DataFrame, pd.DataFrame]:

@@ -41,11 +41,17 @@ def classify_market(title: str, outcomes: list[str] | None = None) -> tuple[str,
 
 
 def parse_spread_line(text: str) -> float | None:
-    match = re.search(r"([+-]\d+(?:\.\d+)?)", text)
+    match = re.search(r"\(([+-]\d+(?:\.\d+)?)\)", text)
+    if match:
+        return safe_float(match.group(1))
+    match = re.search(r"(?<!\d)([+-]\d{1,2}\.\d+)", text)
     return safe_float(match.group(1)) if match else None
 
 
 def parse_total_line(text: str) -> float | None:
+    match = re.search(r"o/u\s*(\d+(?:\.\d+)?)", text, flags=re.IGNORECASE)
+    if match:
+        return safe_float(match.group(1))
     match = re.search(r"(?:over|under|o|u)\s*(\d+(?:\.\d+)?)", text, flags=re.IGNORECASE)
     if match:
         return safe_float(match.group(1))

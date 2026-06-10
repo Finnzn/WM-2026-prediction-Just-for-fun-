@@ -37,6 +37,10 @@ def estimate_lambdas(
 
 def prediction_from_lambdas(lambda_home: float, lambda_away: float, max_goals: int) -> dict:
     matrix = poisson_score_matrix(lambda_home, lambda_away, max_goals)
+    return prediction_from_matrix(matrix)
+
+
+def prediction_from_matrix(matrix: np.ndarray) -> dict:
     home_win, draw, away_win = matrix_to_wdl(matrix)
     top = top_scorelines(matrix, 5)
     best = top[0]
@@ -55,4 +59,3 @@ def prediction_from_lambdas(lambda_home: float, lambda_away: float, max_goals: i
         "top_5_scorelines": top,
         "tail_probability": max(0.0, 1.0 - float(matrix.sum())),
     }
-

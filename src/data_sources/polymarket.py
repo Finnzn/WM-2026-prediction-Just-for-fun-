@@ -230,6 +230,29 @@ def compact_market_text(event: dict[str, Any], market: dict[str, Any]) -> str:
     )
 
 
+def is_full_match_total(candidate: PolymarketDebugCandidate) -> bool:
+    text = norm(f"{candidate.market_question} {candidate.market_slug}")
+    return (
+        candidate.category == "total"
+        and candidate.total_line is not None
+        and "first half" not in text
+        and "1st half" not in text
+        and "team total" not in text
+        and "corners" not in text
+    )
+
+
+def is_full_match_spread(candidate: PolymarketDebugCandidate) -> bool:
+    text = norm(f"{candidate.market_question} {candidate.market_slug}")
+    return (
+        candidate.category == "spread"
+        and candidate.spread_line is not None
+        and "first half" not in text
+        and "1st half" not in text
+        and "corners" not in text
+    )
+
+
 def question_matches_team_win(question: str, team: str) -> bool:
     text = norm(question)
     if " win " not in f" {text} ":
@@ -506,12 +529,23 @@ class PolymarketClient:
         max_pages: int,
         refresh: bool,
     ) -> list[dict[str, Any]]:
+        events: list[dict[str, Any]] = []
+        seen: set[str] = set()
         for slug in self.event_slug_candidates(home_team, away_team, match_date):
             event = self.fetch_event_by_slug(slug, debug)
             if event is not None:
-                debug.events_fetched = 1
-                return [event]
-        return self.fetch_worldcup_events(debug, max_pages=max_pages)
+                for candidate_slug in [slug, f"{slug}-more-markets"]:
+                    candidate_event = event if candidate_slug == slug else self.fetch_event_by_slug(candidate_slug, debug)
+                    if candidate_event is None:
+                        continue
+                    event_slug = str(candidate_event.get("slug", candidate_slug))
+                    if event_slug not in seen:
+                        seen.add(event_slug)
+                        events.append(candidate_event)
+                debug.events_fetched = len(events)
+                return events
+        events = self.fetch_worldcup_events(debug, max_pages=max_pages)
+        return events
 
     def _priced_token(self, token: OutcomeToken, market: dict[str, Any], debug: PolymarketDebugReport | None) -> OutcomeToken:
         token.book_url = f"{self.cfg.polymarket_clob_base_url.rstrip()}/book?token_id={token.token_id}"
@@ -623,8 +657,30 @@ class PolymarketClient:
         match_date: str,
         refresh: bool = False,
     ) -> dict[str, Any] | None:
+        markets = self.best_markets_for_match(home_team, away_team, match_date, refresh=refresh)
+        return markets.get("moneyline") if markets else None
+
+    def best_markets_for_match(
+        self,
+        home_team: str,
+        away_team: str,
+        match_date: str,
+        refresh: bool = False,
+    ) -> dict[str, Any]:
         # `refresh` is kept for CLI compatibility; Gamma/CLOB calls are live.
         debug = self.discover_match_markets(home_team, away_team, match_date, max_pages=30, refresh=refresh)
+        return {
+            "moneyline": self._best_moneyline_from_debug(debug, home_team, away_team),
+            "total": self._best_total_from_debug(debug),
+            "spread": self._best_spread_from_debug(debug, home_team, away_team),
+        }
+
+    def _best_moneyline_from_debug(
+        self,
+        debug: PolymarketDebugReport,
+        home_team: str,
+        away_team: str,
+    ) -> dict[str, Any] | None:
         pieces: dict[str, float] = {}
         raw: dict[str, float] = {}
         confidence_values: list[float] = []
@@ -658,6 +714,8 @@ class PolymarketClient:
             return {
                 "raw": raw,
                 "normalized": {"home_win": home, "draw": draw, "away_win": away},
+                "raw_by_team": {home_team: raw["home_win"], "Draw": raw["draw"], away_team: raw["away_win"]},
+                "normalized_by_team": {home_team: home, "Draw": draw, away_team: away},
                 "source": "polymarket_gamma_events_clob",
                 "timestamp": datetime.now(timezone.utc).isoformat(),
                 "age_minutes": 0.0,
@@ -667,3 +725,65 @@ class PolymarketClient:
                 "slug": "",
             }
         return None
+
+    def _best_total_from_debug(self, debug: PolymarketDebugReport) -> dict[str, Any] | None:
+        candidates = [
+            candidate
+            for candidate in debug.candidates
+            if candidate.accepted and is_full_match_total(candidate)
+        ]
+        if not candidates:
+            return None
+        # The 2.5 line is the most standard soccer total. If unavailable, use the most central line.
+        candidate = sorted(candidates, key=lambda item: (abs((item.total_line or 0) - 2.5), -item.fuzzy_score))[0]
+        over = next((token for token in candidate.tokens if norm(token.outcome) == "over" and token.implied_probability is not None), None)
+        under = next((token for token in candidate.tokens if norm(token.outcome) == "under" and token.implied_probability is not None), None)
+        if not over:
+            return None
+        over_prob = over.implied_probability
+        under_prob = under.implied_probability if under else None
+        if under_prob is not None:
+            over_prob, under_prob = normalize_probabilities([over_prob, under_prob])
+        return {
+            "line": candidate.total_line,
+            "over_price": over.implied_probability,
+            "under_price": under.implied_probability if under else None,
+            "over_probability": over_prob,
+            "under_probability": under_prob,
+            "market_question": candidate.market_question,
+            "market_slug": candidate.market_slug,
+            "confidence": candidate.fuzzy_score,
+        }
+
+    def _best_spread_from_debug(self, debug: PolymarketDebugReport, home_team: str, away_team: str) -> dict[str, Any] | None:
+        candidates = [
+            candidate
+            for candidate in debug.candidates
+            if candidate.accepted and is_full_match_spread(candidate)
+        ]
+        if not candidates:
+            return None
+        # Prefer the closest-to-even handicap because it carries the cleanest margin signal.
+        candidate = sorted(candidates, key=lambda item: (abs(item.spread_line or 0), -item.fuzzy_score))[0]
+        first = next((token for token in candidate.tokens if token.implied_probability is not None), None)
+        if first is None:
+            return None
+        team = first.outcome
+        team_key = classify_outcome(team, home_team, away_team)
+        if team_key not in {"home_win", "away_win"}:
+            return None
+        second = next((token for token in candidate.tokens if token is not first and token.implied_probability is not None), None)
+        cover_prob = first.implied_probability
+        other_prob = second.implied_probability if second else None
+        if other_prob is not None:
+            cover_prob, _ = normalize_probabilities([cover_prob, other_prob])
+        return {
+            "team": home_team if team_key == "home_win" else away_team,
+            "team_is_home": team_key == "home_win",
+            "line": candidate.spread_line,
+            "price": first.implied_probability,
+            "cover_probability": cover_prob,
+            "market_question": candidate.market_question,
+            "market_slug": candidate.market_slug,
+            "confidence": candidate.fuzzy_score,
+        }

@@ -436,6 +436,8 @@ INDEX_HTML = """<!doctype html>
           <h2>Polymarket</h2>
           <div class="status-list">
             <div class="status-row"><div class="k">Moneyline</div><div class="v">${pred.moneyline_used ? "Used" : "Not used"}</div></div>
+            <div class="status-row"><div class="k">Total</div><div class="v">${pred.total_used ? `O/U ${esc(pred.total_line)} · over ${pct(pred.over_price)}` : "Not used"}</div></div>
+            <div class="status-row"><div class="k">Spread</div><div class="v">${pred.spread_used ? `${esc(pred.spread_team)} ${Number(pred.spread_line).toFixed(1)} · cover ${pct(pred.spread_price)}` : "Not used"}</div></div>
             <div class="status-row"><div class="k">Source</div><div class="v">${esc(pred.market_source || "none")}</div></div>
             <div class="status-row"><div class="k">Confidence</div><div class="v">${fixed(pred.market_match_confidence, 2)}</div></div>
           </div>
