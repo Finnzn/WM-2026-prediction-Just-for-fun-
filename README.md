@@ -111,11 +111,12 @@ For `M001`, the useful moneyline markets are the three binary outcome markets:
 - Will South Africa win?
 
 The model normalizes those three implied probabilities into home/draw/away probabilities.
-Full-match over/under and spread markets are also parsed when available. Totals
-push probability mass toward lower or higher aggregate scorelines; spreads push
+Full-match over/under, team-total, and spread markets are also parsed when
+available. Totals push probability mass toward lower or higher aggregate
+scorelines, team totals shape each team's goal distribution, and spreads push
 probability mass toward scorelines where the selected team covers the line. The
-final moneyline calibration is applied last so the displayed score does not
-contradict the displayed win/draw/loss probabilities.
+final moneyline calibration is applied last, then the displayed score is selected
+as the highest-probability exact scoreline.
 
 The market-line weights are still heuristic. Use the backtest command below to
 evaluate the statistical model; validating market weights properly requires
@@ -161,6 +162,16 @@ python3 -m src.cli backtest --max-matches 250 --min-training-matches 250
 
 This backtest does not include Polymarket because the project currently fetches
 live odds only and does not store historical market snapshots.
+
+Evaluate manually saved pre-match market snapshots:
+
+```bash
+python3 -m src.cli market-backtest
+```
+
+The dashboard also updates `data/manual/market_snapshots.csv` automatically after
+each successful prediction. Predicting the same match again replaces the old
+rows for that match with the latest fetched Polymarket prices.
 
 Regenerate cleaned historical data from the local raw file:
 

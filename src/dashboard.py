@@ -9,6 +9,7 @@ from urllib.parse import parse_qs, urlparse
 import pandas as pd
 
 from src.config import Config
+from src.data_sources.market_snapshots import snapshot_rows_from_prediction, upsert_market_snapshot
 from src.models.predictor import build_state, predict_match_row, skip_reason
 
 
@@ -468,6 +469,10 @@ INDEX_HTML = """<!doctype html>
       if (!lines.length) return `<tr><td colspan="4" class="empty">No full-match totals used</td></tr>`;
       return lines.map(item => `<tr><td>O/U ${esc(item.line)}</td><td>${pct(item.over_probability)}</td><td>${pct(item.over_price)}</td><td>${pct(item.under_price)}</td></tr>`).join("");
     }
+    function teamTotalLineRows(lines) {
+      if (!lines.length) return `<tr><td colspan="5" class="empty">No team totals used</td></tr>`;
+      return lines.map(item => `<tr><td>${esc(item.team)}</td><td>O/U ${esc(item.line)}</td><td>${pct(item.over_probability)}</td><td>${pct(item.over_price)}</td><td>${pct(item.under_price)}</td></tr>`).join("");
+    }
     function spreadLineRows(lines) {
       if (!lines.length) return `<tr><td colspan="4" class="empty">No full-match spreads used</td></tr>`;
       return lines.map(item => `<tr><td>${esc(item.team)}</td><td>${Number(item.line).toFixed(1)}</td><td>${pct(item.cover_probability)}</td><td>${pct(item.price)}</td></tr>`).join("");
@@ -477,6 +482,7 @@ INDEX_HTML = """<!doctype html>
       const raw = parseJsonish(pred.moneyline_raw_prices, {});
       const normalized = parseJsonish(pred.moneyline_normalized_probabilities, {});
       const totalLines = parseJsonish(pred.total_lines_used, []);
+      const teamTotalLines = parseJsonish(pred.team_total_lines_used, []);
       const spreadLines = parseJsonish(pred.spread_lines_used, []);
       const modelWeightText = `${pct(pred.model_weight)} model / ${pct(pred.moneyline_market_weight)} market`;
       result.innerHTML = `
@@ -558,6 +564,13 @@ INDEX_HTML = """<!doctype html>
             <table>
               <thead><tr><th>Line</th><th>Over prob</th><th>Over raw</th><th>Under raw</th></tr></thead>
               <tbody>${totalLineRows(totalLines)}</tbody>
+            </table>
+          </section>
+          <section class="panel">
+            <div class="panel-head"><h2>Team Totals Used</h2><span class="pill">each ${pct(pred.team_total_per_line_weight)}</span></div>
+            <table>
+              <thead><tr><th>Team</th><th>Line</th><th>Over prob</th><th>Over raw</th><th>Under raw</th></tr></thead>
+              <tbody>${teamTotalLineRows(teamTotalLines)}</tbody>
             </table>
           </section>
           <section class="panel">
@@ -644,7 +657,9 @@ def prediction_payload(match_id: str, model_weight: float | None = None, market_
         market_weight=market_weight,
         refresh_markets=True,
     )
-    return {"prediction": json_safe(prediction)}
+    snapshot_rows = snapshot_rows_from_prediction(prediction)
+    saved_rows = upsert_market_snapshot(cfg.market_snapshots_path, match_id, snapshot_rows)
+    return {"prediction": json_safe(prediction), "market_snapshot_rows_saved": saved_rows}
 
 
 def parse_weight(value: str | None, name: str) -> float | None:

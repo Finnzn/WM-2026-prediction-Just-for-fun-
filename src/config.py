@@ -27,6 +27,7 @@ class Config:
     schedule_path: Path = Path(os.getenv("WORLDCUP_2026_SCHEDULE_PATH", "data/manual/worldcup_2026_schedule.csv"))
     elo_ratings_path: Path = Path(os.getenv("ELO_RATINGS_PATH", "data/manual/elo_ratings.csv"))
     team_mapping_path: Path = Path(os.getenv("TEAM_MAPPING_PATH", "data/manual/team_name_mapping.csv"))
+    market_snapshots_path: Path = Path(os.getenv("MARKET_SNAPSHOTS_PATH", "data/manual/market_snapshots.csv"))
 
     polymarket_gamma_base_url: str = os.getenv("POLYMARKET_GAMMA_BASE_URL", "https://gamma-api.polymarket.com")
     polymarket_clob_base_url: str = os.getenv("POLYMARKET_CLOB_BASE_URL", "https://clob.polymarket.com")
@@ -52,6 +53,7 @@ class Config:
     live_moneyline_market_weight: float = _float("LIVE_MONEYLINE_MARKET_WEIGHT", 0.7)
     spread_calibration_weight: float = _float("SPREAD_CALIBRATION_WEIGHT", 0.25)
     total_calibration_weight: float = _float("TOTAL_CALIBRATION_WEIGHT", 0.30)
+    team_total_calibration_weight: float = _float("TEAM_TOTAL_CALIBRATION_WEIGHT", 0.25)
     use_futures_as_team_strength: bool = _bool("USE_FUTURES_AS_TEAM_STRENGTH", False)
 
     max_goals: int = _int("MAX_GOALS", 6)

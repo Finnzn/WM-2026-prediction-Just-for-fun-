@@ -10,6 +10,7 @@ from src.data_sources.elo import update_dynamic_elo
 from src.data_sources.historical_results import add_time_weights
 from src.models.feature_engineering import team_recent_stats
 from src.models.poisson_model import estimate_lambdas, prediction_from_lambdas
+from src.utils import normalize_probabilities
 
 
 def simple_backtest(results: pd.DataFrame) -> dict[str, float]:
@@ -175,3 +176,112 @@ def _empty_metrics(available_matches: int, min_training_matches: int) -> dict[st
         "wdl_brier_score": 0.0,
         "market_data_included": False,
     }
+
+
+def evaluate_market_snapshots(snapshots: pd.DataFrame, schedule: pd.DataFrame) -> dict[str, Any]:
+    played = schedule[schedule["status"].eq("played")].copy()
+    played["home_score"] = pd.to_numeric(played["home_score"], errors="coerce")
+    played["away_score"] = pd.to_numeric(played["away_score"], errors="coerce")
+    played = played.dropna(subset=["home_score", "away_score"])
+    by_match = {str(row.match_id): row for row in played.itertuples(index=False)}
+
+    moneyline_rows = []
+    total_rows = []
+    team_total_rows = []
+    spread_rows = []
+    for match_id, rows in snapshots.groupby("match_id"):
+        match = by_match.get(str(match_id))
+        if match is None:
+            continue
+        moneyline = rows[rows["market_type"].eq("moneyline")].copy()
+        if len(moneyline) >= 3:
+            moneyline_rows.append(_evaluate_moneyline_snapshot(str(match_id), moneyline, match))
+        for row in rows[rows["market_type"].eq("total")].itertuples(index=False):
+            total_rows.append(_evaluate_total_snapshot(str(match_id), row, match))
+        for row in rows[rows["market_type"].eq("team_total")].itertuples(index=False):
+            team_total_rows.append(_evaluate_team_total_snapshot(str(match_id), row, match))
+        for row in rows[rows["market_type"].eq("spread")].itertuples(index=False):
+            spread_rows.append(_evaluate_spread_snapshot(str(match_id), row, match))
+
+    return {
+        "matches_with_moneyline": float(len(moneyline_rows)),
+        "moneyline_accuracy": _mean([row["correct"] for row in moneyline_rows]),
+        "moneyline_log_loss": _mean([row["log_loss"] for row in moneyline_rows]),
+        "moneyline_brier": _mean([row["brier"] for row in moneyline_rows]),
+        "total_lines": float(len(total_rows)),
+        "total_brier": _mean([row["brier"] for row in total_rows]),
+        "team_total_lines": float(len(team_total_rows)),
+        "team_total_brier": _mean([row["brier"] for row in team_total_rows]),
+        "spread_lines": float(len(spread_rows)),
+        "spread_brier": _mean([row["brier"] for row in spread_rows]),
+        "moneyline_details": moneyline_rows,
+        "total_details": total_rows,
+        "team_total_details": team_total_rows,
+        "spread_details": spread_rows,
+        "warning": "Only use this as a diagnostic. Two matches are far too few to calibrate weights.",
+    }
+
+
+def _evaluate_moneyline_snapshot(match_id: str, rows: pd.DataFrame, match: Any) -> dict[str, Any]:
+    teams = [str(item) for item in rows["team"].tolist()]
+    probs = [float(item) for item in rows["probability"].tolist()]
+    normalized = dict(zip(teams, normalize_probabilities(probs)))
+    home = str(match.home_team)
+    away = str(match.away_team)
+    actual = home if int(match.home_score) > int(match.away_score) else away if int(match.home_score) < int(match.away_score) else "Draw"
+    predicted = max(normalized, key=normalized.get)
+    actual_prob = max(1e-12, normalized.get(actual, 1e-12))
+    brier = sum((normalized.get(label, 0.0) - (1.0 if label == actual else 0.0)) ** 2 for label in [home, "Draw", away])
+    return {
+        "match_id": match_id,
+        "actual": actual,
+        "predicted": predicted,
+        "correct": float(predicted == actual),
+        "actual_probability": actual_prob,
+        "log_loss": -math.log(actual_prob),
+        "brier": brier,
+        "normalized": normalized,
+    }
+
+
+def _evaluate_total_snapshot(match_id: str, row: Any, match: Any) -> dict[str, Any]:
+    total_goals = int(match.home_score) + int(match.away_score)
+    line = float(row.line)
+    over = float(row.probability)
+    actual_over = total_goals > line
+    brier = (over - (1.0 if actual_over else 0.0)) ** 2
+    return {"match_id": match_id, "line": line, "probability": over, "actual_over": actual_over, "brier": brier}
+
+
+def _evaluate_team_total_snapshot(match_id: str, row: Any, match: Any) -> dict[str, Any]:
+    team = str(row.team)
+    line = float(row.line)
+    if team == str(match.home_team):
+        goals = int(match.home_score)
+    elif team == str(match.away_team):
+        goals = int(match.away_score)
+    else:
+        return {"match_id": match_id, "team": team, "line": line, "probability": float(row.probability), "actual_over": None, "brier": 0.0}
+    over = float(row.probability)
+    actual_over = goals > line
+    brier = (over - (1.0 if actual_over else 0.0)) ** 2
+    return {"match_id": match_id, "team": team, "line": line, "probability": over, "actual_over": actual_over, "brier": brier}
+
+
+def _evaluate_spread_snapshot(match_id: str, row: Any, match: Any) -> dict[str, Any]:
+    team = str(row.team)
+    line = float(row.line)
+    if team == str(match.home_team):
+        margin = int(match.home_score) - int(match.away_score)
+    elif team == str(match.away_team):
+        margin = int(match.away_score) - int(match.home_score)
+    else:
+        return {"match_id": match_id, "team": team, "line": line, "probability": float(row.probability), "actual_cover": None, "brier": 0.0}
+    actual_cover = margin + line > 0
+    prob = float(row.probability)
+    brier = (prob - (1.0 if actual_cover else 0.0)) ** 2
+    return {"match_id": match_id, "team": team, "line": line, "probability": prob, "actual_cover": actual_cover, "brier": brier}
+
+
+def _mean(values: list[float]) -> float:
+    return sum(values) / len(values) if values else 0.0

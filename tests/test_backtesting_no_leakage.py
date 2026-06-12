@@ -2,7 +2,7 @@ import pandas as pd
 
 from src.config import Config
 from src.data_sources.historical_results import effective_results
-from src.models.backtesting import simple_backtest, walk_forward_model_backtest
+from src.models.backtesting import evaluate_market_snapshots, simple_backtest, walk_forward_model_backtest
 
 
 def test_backtesting_uses_prior_rows_only_and_runs():
@@ -49,3 +49,27 @@ def test_effective_results_excludes_same_day_when_exclusive():
     )
     effective = effective_results(historical, current_wc, Config(), as_of=pd.Timestamp("2026-06-10").date(), exclusive=True)
     assert set(effective["home_team"]) == {"A"}
+
+
+def test_market_snapshot_evaluation_scores_played_matches():
+    schedule = pd.DataFrame(
+        [
+            {"match_id": "M001", "status": "played", "home_team": "Mexico", "away_team": "South Africa", "home_score": "2", "away_score": "0"}
+        ]
+    )
+    snapshots = pd.DataFrame(
+        [
+            {"match_id": "M001", "market_type": "moneyline", "team": "Mexico", "line": None, "probability": 0.695},
+            {"match_id": "M001", "market_type": "moneyline", "team": "Draw", "line": None, "probability": 0.205},
+            {"match_id": "M001", "market_type": "moneyline", "team": "South Africa", "line": None, "probability": 0.105},
+            {"match_id": "M001", "market_type": "total", "team": "Over", "line": 1.5, "probability": 0.695},
+            {"match_id": "M001", "market_type": "team_total", "team": "Mexico", "line": 1.5, "probability": 0.405},
+            {"match_id": "M001", "market_type": "spread", "team": "Mexico", "line": -1.5, "probability": 0.405},
+        ]
+    )
+    metrics = evaluate_market_snapshots(snapshots, schedule)
+    assert metrics["matches_with_moneyline"] == 1
+    assert metrics["moneyline_accuracy"] == 1
+    assert metrics["total_lines"] == 1
+    assert metrics["team_total_lines"] == 1
+    assert metrics["spread_lines"] == 1

@@ -11,7 +11,7 @@ from src.data_sources.historical_results import load_historical_results
 from src.data_sources.polymarket import PolymarketClient, PolymarketDebugCandidate
 from src.data_sources.schedule import load_schedule, validate_schedule
 from src.data_sources.team_mapping import TeamNameMapper
-from src.models.backtesting import simple_backtest, walk_forward_model_backtest
+from src.models.backtesting import evaluate_market_snapshots, simple_backtest, walk_forward_model_backtest
 from src.models.predictor import build_state, predict_all, predict_match_row, prediction_report, skip_reason
 
 
@@ -20,12 +20,14 @@ OUTPUT_COLUMNS = [
     "predicted_home_goals", "predicted_away_goals", "predicted_score", "expected_home_goals",
     "expected_away_goals", "home_win_prob", "draw_prob", "away_win_prob", "top_5_scorelines",
     "confidence", "model_weight", "moneyline_market_weight", "spread_calibration_weight",
-    "total_calibration_weight", "market_data_used", "market_source", "market_timestamp",
+    "total_calibration_weight", "team_total_calibration_weight", "market_data_used", "market_source", "market_timestamp",
     "market_age_minutes", "moneyline_used", "moneyline_raw_prices",
     "moneyline_normalized_probabilities", "spread_used", "spread_team", "spread_line",
     "spread_price", "spread_interpretation", "spread_lines_used", "spread_per_line_weight",
     "total_used", "total_line", "over_price", "under_price", "total_interpretation",
-    "total_lines_used", "total_per_line_weight", "market_match_confidence", "market_type",
+    "total_lines_used", "total_per_line_weight", "team_total_used", "team_total_interpretation",
+    "team_total_lines_used", "team_total_per_line_weight", "team_total_data_used",
+    "market_match_confidence", "market_type",
     "training_data_start_date", "training_data_end_date", "number_of_historical_matches_used",
     "number_of_current_worldcup_matches_used", "home_team_matches_used", "away_team_matches_used",
     "home_team_weighted_matches", "away_team_weighted_matches", "home_team_goals_for",
@@ -238,6 +240,22 @@ def backtest_command(args: argparse.Namespace) -> int:
     return 0
 
 
+def market_backtest_command(_: argparse.Namespace) -> int:
+    cfg = Config()
+    if not cfg.market_snapshots_path.exists():
+        print(f"Missing market snapshot file: {cfg.market_snapshots_path}")
+        return 1
+    mapper = TeamNameMapper(cfg.team_mapping_path)
+    schedule = load_schedule(cfg.schedule_path, mapper)
+    snapshots = pd.read_csv(cfg.market_snapshots_path, dtype={"match_id": str, "market_type": str, "team": str})
+    snapshots["probability"] = pd.to_numeric(snapshots["probability"], errors="coerce")
+    snapshots["line"] = pd.to_numeric(snapshots["line"], errors="coerce")
+    snapshots = snapshots.dropna(subset=["match_id", "market_type", "team", "probability"])
+    metrics = evaluate_market_snapshots(snapshots, schedule)
+    print(json.dumps(metrics, indent=2))
+    return 0
+
+
 def export_command(_: argparse.Namespace) -> int:
     path = Path("outputs/predictions.csv")
     if not path.exists():
@@ -295,6 +313,7 @@ def build_parser() -> argparse.ArgumentParser:
     backtest.add_argument("--min-training-matches", type=int, default=250)
     backtest.add_argument("--max-matches", type=int, default=250)
     backtest.set_defaults(func=backtest_command)
+    sub.add_parser("market-backtest").set_defaults(func=market_backtest_command)
     sub.add_parser("export").set_defaults(func=export_command)
     return parser
 

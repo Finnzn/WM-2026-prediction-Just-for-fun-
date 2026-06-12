@@ -1,4 +1,4 @@
-from src.data_sources.polymarket import classify_match_market, extract_outcome_tokens
+from src.data_sources.polymarket import classify_match_market, extract_outcome_tokens, team_key_from_market_text
 from src.data_sources.polymarket import PolymarketClient
 from src.config import Config
 from src.markets.classifier import score_candidate
@@ -39,3 +39,8 @@ def test_polymarket_slug_candidates_include_utc_date_and_market_codes():
     client = PolymarketClient(Config())
     assert "fifwc-kr-cze-2026-06-11" in client.event_slug_candidates("South Korea", "Czechia", "2026-06-12")
     assert "fifwc-usa-par-2026-06-12" in client.event_slug_candidates("United States", "Paraguay", "2026-06-13")
+
+
+def test_team_total_market_text_identifies_team():
+    assert team_key_from_market_text("Mexico team total O/U 1.5", "Mexico", "South Africa") == "home"
+    assert team_key_from_market_text("South Africa total goals O/U 0.5", "Mexico", "South Africa") == "away"

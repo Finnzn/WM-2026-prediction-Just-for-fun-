@@ -15,7 +15,7 @@ from src.data_sources.schedule import load_schedule, played_worldcup_results
 from src.data_sources.team_mapping import TeamNameMapper
 from src.markets.moneyline import blend_moneyline
 from src.markets.spread import calibrate_spread
-from src.markets.totals import calibrate_total
+from src.markets.totals import calibrate_team_total, calibrate_total
 from src.markets.wdl import calibrate_wdl
 from src.models.confidence import confidence_score
 from src.models.feature_engineering import global_goal_rates, team_recent_stats
@@ -141,8 +141,10 @@ def predict_match_row(
     moneyline_used = False
     spread_used = False
     total_used = False
+    team_total_used = False
     spread_info: dict[str, Any] = {}
     total_info: dict[str, Any] = {}
+    team_total_info: dict[str, Any] = {}
     notes: list[str] = []
     mw = 1.0 if model_weight is None else model_weight
     kw = 0.0 if market_weight is None else market_weight
@@ -151,8 +153,11 @@ def predict_match_row(
         market_signals = polymarket.best_markets_for_match(home, away, str(row.get("date", "")), refresh=refresh_markets)
         pm = market_signals.get("moneyline")
         total_signals = market_signals.get("totals") or []
+        team_total_signals = market_signals.get("team_totals") or []
         spread_signals = market_signals.get("spreads") or []
-        total_weight = min(cfg.total_calibration_weight / max(1, len(total_signals)), 0.08)
+        total_budget = cfg.total_calibration_weight * (0.6 if team_total_signals else 1.0)
+        total_weight = min(total_budget / max(1, len(total_signals)), 0.08)
+        team_total_weight = min(cfg.team_total_calibration_weight / max(1, len(team_total_signals)), 0.06)
         spread_weight = min(cfg.spread_calibration_weight / max(1, len(spread_signals)), 0.06)
         if total_signals:
             total_notes: list[str] = []
@@ -175,6 +180,31 @@ def predict_match_row(
                 "Polymarket totals calibrated: "
                 + ", ".join(total_notes)
                 + f" (weight each {total_weight:.2f})"
+            )
+        if team_total_signals:
+            team_total_notes: list[str] = []
+            for team_total_signal in team_total_signals:
+                matrix = calibrate_team_total(
+                    matrix,
+                    bool(team_total_signal["team_is_home"]),
+                    float(team_total_signal["line"]),
+                    float(team_total_signal["over_probability"]),
+                    team_total_weight,
+                )
+                team_total_notes.append(
+                    f"{team_total_signal['team']} {team_total_signal['line']}={float(team_total_signal['over_probability']):.1%}"
+                )
+            team_total_used = True
+            team_total_info = team_total_signals[0] | {"lines_used": team_total_signals, "per_line_weight": team_total_weight}
+            market_used = True
+            market_source = "polymarket_gamma_events_clob"
+            market_timestamp = datetime_now_iso()
+            market_age_minutes = 0.0
+            market_conf = max(market_conf, max(float(item.get("confidence", 0.0)) for item in team_total_signals))
+            notes.append(
+                "Polymarket team totals calibrated: "
+                + ", ".join(team_total_notes)
+                + f" (weight each {team_total_weight:.2f})"
             )
         if spread_signals:
             spread_notes: list[str] = []
@@ -226,7 +256,7 @@ def predict_match_row(
             normalized_market = pm.get("normalized_by_team", pm["normalized"])
             market_conf = max(market_conf, pm["confidence"])
             notes.append(f"automatic Polymarket moneyline used: {pm.get('title') or pm.get('slug')}")
-        elif total_used or spread_used:
+        elif total_used or team_total_used or spread_used:
             pred = prediction_from_matrix(matrix)
             matrix = pred.pop("matrix")
     if not market_used:
@@ -259,6 +289,7 @@ def predict_match_row(
             "moneyline_market_weight": kw if moneyline_used else 0.0,
             "spread_calibration_weight": cfg.spread_calibration_weight,
             "total_calibration_weight": cfg.total_calibration_weight,
+            "team_total_calibration_weight": cfg.team_total_calibration_weight,
             "market_data_used": market_used,
             "market_source": market_source,
             "market_timestamp": market_timestamp,
@@ -288,6 +319,14 @@ def predict_match_row(
             ),
             "total_lines_used": json_dumps(total_info.get("lines_used", [])) if total_info else "",
             "total_per_line_weight": total_info.get("per_line_weight", ""),
+            "team_total_used": team_total_used,
+            "team_total_interpretation": (
+                f"{len(team_total_info.get('lines_used', [team_total_info]))} team total line(s) calibrated"
+                if team_total_info
+                else ""
+            ),
+            "team_total_lines_used": json_dumps(team_total_info.get("lines_used", [])) if team_total_info else "",
+            "team_total_per_line_weight": team_total_info.get("per_line_weight", ""),
             "market_match_confidence": market_conf,
             "market_type": "three_way_moneyline" if moneyline_used else "none",
             "training_data_start_date": state.training_data_start_date,
@@ -312,7 +351,9 @@ def predict_match_row(
             "data_sources_used": "historical_results,schedule,provided_elo,dynamic_elo"
             + (",market_moneyline" if moneyline_used else "")
             + (",market_spread" if spread_used else "")
-            + (",market_total" if total_used else ""),
+            + (",market_total" if total_used else "")
+            + (",market_team_total" if team_total_used else ""),
+            "team_total_data_used": team_total_used,
             "notes": "; ".join(notes),
         }
     )

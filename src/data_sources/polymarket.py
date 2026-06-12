@@ -242,6 +242,18 @@ def is_full_match_total(candidate: PolymarketDebugCandidate) -> bool:
     )
 
 
+def is_team_total(candidate: PolymarketDebugCandidate) -> bool:
+    text = norm(f"{candidate.market_question} {candidate.market_slug}")
+    return (
+        candidate.category == "total"
+        and candidate.total_line is not None
+        and "first half" not in text
+        and "1st half" not in text
+        and "corners" not in text
+        and ("team total" in text or "team goals" in text or "total goals" in text)
+    )
+
+
 def is_full_match_spread(candidate: PolymarketDebugCandidate) -> bool:
     text = norm(f"{candidate.market_question} {candidate.market_slug}")
     return (
@@ -262,6 +274,23 @@ def question_matches_team_win(question: str, team: str) -> bool:
         if alias_norm and re.search(rf"\b{re.escape(alias_norm)}\b", text):
             return True
     return False
+
+
+def team_key_from_market_text(text: str, home_team: str, away_team: str) -> str:
+    text_norm = norm(text)
+    home_hit = any(norm(alias) and re.search(rf"\b{re.escape(norm(alias))}\b", text_norm) for alias in aliases_for_team(home_team))
+    away_hit = any(norm(alias) and re.search(rf"\b{re.escape(norm(alias))}\b", text_norm) for alias in aliases_for_team(away_team))
+    if home_hit and not away_hit:
+        return "home"
+    if away_hit and not home_hit:
+        return "away"
+    slug_home = "team total home" in text_norm or "home team total" in text_norm
+    slug_away = "team total away" in text_norm or "away team total" in text_norm
+    if slug_home and not slug_away:
+        return "home"
+    if slug_away and not slug_home:
+        return "away"
+    return ""
 
 
 def classify_match_market(event: dict[str, Any], market: dict[str, Any], home_team: str, away_team: str) -> tuple[str, str]:
@@ -671,10 +700,12 @@ class PolymarketClient:
         debug = self.discover_match_markets(home_team, away_team, match_date, max_pages=30, refresh=refresh)
         totals = self._best_totals_from_debug(debug)
         spreads = self._best_spreads_from_debug(debug, home_team, away_team)
+        team_totals = self._best_team_totals_from_debug(debug, home_team, away_team)
         return {
             "moneyline": self._best_moneyline_from_debug(debug, home_team, away_team),
             "total": totals[0] if totals else None,
             "totals": totals,
+            "team_totals": team_totals,
             "spread": spreads[0] if spreads else None,
             "spreads": spreads,
         }
@@ -760,6 +791,64 @@ class PolymarketClient:
             seen_lines.add(line)
             selected.append(
                 {
+                    "line": line,
+                    "over_price": over.implied_probability,
+                    "under_price": under.implied_probability if under else None,
+                    "over_probability": over_prob,
+                    "under_probability": under_prob,
+                    "market_question": candidate.market_question,
+                    "market_slug": candidate.market_slug,
+                    "confidence": candidate.fuzzy_score,
+                }
+            )
+            if len(selected) >= max_lines:
+                break
+        return selected
+
+    def _best_team_totals_from_debug(
+        self,
+        debug: PolymarketDebugReport,
+        home_team: str,
+        away_team: str,
+        max_lines: int = 6,
+    ) -> list[dict[str, Any]]:
+        candidates = [
+            candidate
+            for candidate in debug.candidates
+            if candidate.accepted
+            and candidate.category == "total"
+            and candidate.total_line is not None
+            and "first half" not in norm(f"{candidate.market_question} {candidate.market_slug}")
+            and "1st half" not in norm(f"{candidate.market_question} {candidate.market_slug}")
+            and "corners" not in norm(f"{candidate.market_question} {candidate.market_slug}")
+        ]
+        if not candidates:
+            return []
+        selected: list[dict[str, Any]] = []
+        seen: set[tuple[str, float]] = set()
+        for candidate in sorted(candidates, key=lambda item: (abs((item.total_line or 0) - 1.5), item.total_line or 0, -item.fuzzy_score)):
+            line = candidate.total_line
+            if line is None:
+                continue
+            team_key = team_key_from_market_text(f"{candidate.market_question} {candidate.market_slug}", home_team, away_team)
+            if team_key not in {"home", "away"}:
+                continue
+            key = (team_key, line)
+            if key in seen:
+                continue
+            over = next((token for token in candidate.tokens if norm(token.outcome) == "over" and token.implied_probability is not None), None)
+            under = next((token for token in candidate.tokens if norm(token.outcome) == "under" and token.implied_probability is not None), None)
+            if not over:
+                continue
+            over_prob = over.implied_probability
+            under_prob = under.implied_probability if under else None
+            if under_prob is not None:
+                over_prob, under_prob = normalize_probabilities([over_prob, under_prob])
+            seen.add(key)
+            selected.append(
+                {
+                    "team": home_team if team_key == "home" else away_team,
+                    "team_is_home": team_key == "home",
                     "line": line,
                     "over_price": over.implied_probability,
                     "under_price": under.implied_probability if under else None,
