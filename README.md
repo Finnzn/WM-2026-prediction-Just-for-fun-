@@ -184,6 +184,14 @@ Regenerate cleaned historical data from the local raw file:
 python3 scripts/ingest_historical_results.py
 ```
 
+## Data Sources
+
+This project uses the following external data sources:
+
+- Elo ratings: https://www.eloratings.net/2026_World_Cup
+- World Cup 2026 schedule: https://www.eloratings.net/2026_World_Cup
+- Historical international results: https://www.kaggle.com/datasets/martj42/international-football-results-from-1872-to-2017?resource=download
+
 ## Data Policy
 
 The `data/` folder is local and ignored by Git, except any files that were already intentionally tracked before. Do not commit Kaggle credentials, `kaggle.json`, raw downloads, generated predictions, or secrets.
