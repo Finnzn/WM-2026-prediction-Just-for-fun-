@@ -8,6 +8,7 @@ The intended workflow is:
 2. Start the dashboard.
 3. Select a match and model/market weights.
 4. The app fetches live Polymarket data, combines it with the local statistical model, and shows a prediction.
+5. The Overview tab tracks saved predictions against played results.
 
 ## Run The Dashboard
 
@@ -26,6 +27,8 @@ The dashboard uses:
 - `data/manual/worldcup_2026_schedule.csv`
 - `data/manual/elo_ratings.csv`
 - `data/manual/team_name_mapping.csv`
+- `data/manual/market_snapshots.csv`
+- `data/manual/prediction_snapshots.csv`
 - `data/processed/clean_historical_results.csv`
 - live read-only Polymarket Gamma and CLOB APIs
 
@@ -48,9 +51,9 @@ For each selected scheduled match, the program:
 4. Updates Elo dynamically with played World Cup 2026 matches.
 5. Estimates attacking and defensive strength from recent weighted results.
 6. Builds a Poisson score model.
-7. Fetches Polymarket moneyline, total-goals, and spread markets when available.
-8. Uses totals and spreads to calibrate the score matrix.
-9. Blends win/draw/loss probabilities with the standard default weights:
+7. Fetches Polymarket moneyline, full-match totals, team totals, and spread markets when available.
+8. Uses totals, team totals, and spreads to calibrate the score matrix.
+9. Blends win/draw/loss probabilities with the standard CLI default weights:
 
 ```text
 40% statistical model
@@ -118,9 +121,8 @@ probability mass toward scorelines where the selected team covers the line. The
 final moneyline calibration is applied last, then the displayed score is selected
 as the highest-probability exact scoreline.
 
-The market-line weights are still heuristic. Use the backtest command below to
-evaluate the statistical model; validating market weights properly requires
-saved historical market snapshots.
+The market-line weights are still heuristic. Use the backtest commands below to
+evaluate the statistical model and saved market snapshots.
 
 If exact slug lookup fails, the client falls back to paginated Gamma event discovery:
 
@@ -160,18 +162,19 @@ Run a walk-forward backtest of the statistical model:
 python3 -m src.cli backtest --max-matches 250 --min-training-matches 250
 ```
 
-This backtest does not include Polymarket because the project currently fetches
-live odds only and does not store historical market snapshots.
+This backtest does not include Polymarket. It evaluates the statistical model
+using historical results only.
 
-Evaluate manually saved pre-match market snapshots:
+Evaluate saved pre-match market snapshots:
 
 ```bash
 python3 -m src.cli market-backtest
 ```
 
-The dashboard also updates `data/manual/market_snapshots.csv` automatically after
+The dashboard updates `data/manual/market_snapshots.csv` automatically after
 each successful prediction. Predicting the same match again replaces the old
-rows for that match with the latest fetched Polymarket prices.
+market rows for that match with the latest fetched Polymarket prices. The file
+stores moneyline, full-match total, team-total, and spread rows when available.
 
 It also updates `data/manual/prediction_snapshots.csv` with the displayed
 prediction for the match. The dashboard Overview tab compares saved predictions
