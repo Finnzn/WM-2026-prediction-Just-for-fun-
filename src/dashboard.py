@@ -10,6 +10,12 @@ import pandas as pd
 
 from src.config import Config
 from src.data_sources.market_snapshots import snapshot_rows_from_prediction, upsert_market_snapshot
+from src.data_sources.prediction_snapshots import (
+    load_prediction_snapshots,
+    prediction_overview,
+    prediction_snapshot_row,
+    upsert_prediction_snapshot,
+)
 from src.models.predictor import build_state, predict_match_row, skip_reason
 
 
@@ -66,6 +72,25 @@ INDEX_HTML = """<!doctype html>
       letter-spacing: 0;
     }
     main { padding: 18px 0 34px; }
+    .tabs {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 14px;
+    }
+    .tab {
+      height: 36px;
+      padding: 0 14px;
+      border-radius: 999px;
+      border: 1px solid var(--line);
+      background: var(--surface);
+      color: var(--ink);
+      font-weight: 760;
+    }
+    .tab.active {
+      background: var(--blue);
+      color: white;
+      border-color: var(--blue);
+    }
     .toolbar {
       display: grid;
       grid-template-columns: minmax(280px, 1.4fr) 170px 118px 118px auto auto;
@@ -251,6 +276,40 @@ INDEX_HTML = """<!doctype html>
       overflow-wrap: anywhere;
       font-variant-numeric: tabular-nums;
     }
+    .chart {
+      display: grid;
+      gap: 12px;
+      margin-top: 14px;
+    }
+    .chart-row {
+      display: grid;
+      grid-template-columns: 130px 1fr 58px;
+      gap: 10px;
+      align-items: center;
+    }
+    .chart-label {
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 760;
+    }
+    .chart-track {
+      height: 16px;
+      overflow: hidden;
+      border-radius: 999px;
+      background: #e7ece8;
+    }
+    .chart-fill {
+      height: 100%;
+      border-radius: 999px;
+      background: var(--green);
+    }
+    .chart-fill.score { background: var(--blue); }
+    .chart-fill.diff { background: var(--amber); }
+    .chart-value {
+      text-align: right;
+      font-weight: 850;
+      font-variant-numeric: tabular-nums;
+    }
     .split {
       display: grid;
       grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -323,7 +382,11 @@ INDEX_HTML = """<!doctype html>
     </div>
   </header>
   <main class="shell">
-    <section class="toolbar">
+    <section class="tabs">
+      <button id="predictTab" class="tab active">Predict</button>
+      <button id="overviewTab" class="tab">Overview</button>
+    </section>
+    <section id="predictControls" class="toolbar">
       <label>Match
         <select id="matchSelect"></select>
       </label>
@@ -347,6 +410,7 @@ INDEX_HTML = """<!doctype html>
     </section>
     <div id="status" class="message">Loading matches...</div>
     <section id="result" class="layout" style="display:none"></section>
+    <section id="overview" class="stack" style="display:none"></section>
   </main>
   <script>
     const select = document.getElementById("matchSelect");
@@ -354,6 +418,10 @@ INDEX_HTML = """<!doctype html>
     const result = document.getElementById("result");
     const predictButton = document.getElementById("predictButton");
     const refreshButton = document.getElementById("refreshButton");
+    const predictTab = document.getElementById("predictTab");
+    const overviewTab = document.getElementById("overviewTab");
+    const predictControls = document.getElementById("predictControls");
+    const overview = document.getElementById("overview");
     const weightPreset = document.getElementById("weightPreset");
     const modelWeight = document.getElementById("modelWeight");
     const marketWeight = document.getElementById("marketWeight");
@@ -477,6 +545,79 @@ INDEX_HTML = """<!doctype html>
       if (!lines.length) return `<tr><td colspan="4" class="empty">No full-match spreads used</td></tr>`;
       return lines.map(item => `<tr><td>${esc(item.team)}</td><td>${Number(item.line).toFixed(1)}</td><td>${pct(item.cover_probability)}</td><td>${pct(item.price)}</td></tr>`).join("");
     }
+    function overviewRows(rows) {
+      if (!rows.length) return `<tr><td colspan="10" class="empty">No saved predictions yet</td></tr>`;
+      return rows.map(row => `<tr>
+        <td>${esc(row.match_id)}</td>
+        <td>${esc(row.home_team)} vs ${esc(row.away_team)}</td>
+        <td>${esc(row.stage)}</td>
+        <td>${esc(row.status)}</td>
+        <td>${esc(row.prediction)}</td>
+        <td>${esc(row.actual || "-")}</td>
+        <td>${row.actual ? (row.correct_score ? "Yes" : "No") : "-"}</td>
+        <td>${row.actual ? (row.correct_winner ? "Yes" : "No") : "-"}</td>
+        <td>${row.actual ? (row.correct_goal_diff ? "Yes" : "No") : "-"}</td>
+        <td>${esc(row.goal_error === "" ? "-" : row.goal_error)}</td>
+      </tr>`).join("");
+    }
+    function hitRate(correct, total) {
+      const denominator = Number(total || 0);
+      if (!denominator) return 0;
+      return Math.max(0, Math.min(1, Number(correct || 0) / denominator));
+    }
+    function chartRow(label, value, cls = "") {
+      const width = Math.round(value * 100);
+      return `<div class="chart-row">
+        <div class="chart-label">${esc(label)}</div>
+        <div class="chart-track"><div class="chart-fill ${cls}" style="width:${width}%"></div></div>
+        <div class="chart-value">${width}%</div>
+      </div>`;
+    }
+    async function loadOverview() {
+      predictControls.style.display = "none";
+      result.style.display = "none";
+      overview.style.display = "grid";
+      predictTab.classList.remove("active");
+      overviewTab.classList.add("active");
+      setStatus("Loading overview...");
+      const response = await fetch("/api/overview");
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || "Could not load overview");
+      const summary = payload.summary || {};
+      overview.innerHTML = `
+        <section class="panel">
+          <div class="panel-head"><h2>Prediction Overview</h2></div>
+          <div class="metric-grid">
+            ${metric("Saved predictions", whole(summary.predictions))}
+            ${metric("Played predictions", whole(summary.played_predictions))}
+            ${metric("Correct winners", `${whole(summary.correct_winners)} / ${whole(summary.played_predictions)}`)}
+            ${metric("Correct scores", `${whole(summary.correct_scores)} / ${whole(summary.played_predictions)}`)}
+          </div>
+          <div class="metric-grid">
+            ${metric("Correct goal diff", `${whole(summary.correct_goal_diffs)} / ${whole(summary.played_predictions)}`)}
+            ${metric("Avg goal error", summary.average_goal_error === "" ? "-" : summary.average_goal_error)}
+          </div>
+          <div class="chart">
+            ${chartRow("Winner", hitRate(summary.correct_winners, summary.played_predictions))}
+            ${chartRow("Exact score", hitRate(summary.correct_scores, summary.played_predictions), "score")}
+            ${chartRow("Goal diff", hitRate(summary.correct_goal_diffs, summary.played_predictions), "diff")}
+          </div>
+        </section>
+        <section class="panel">
+          <table>
+            <thead><tr><th>ID</th><th>Match</th><th>Stage</th><th>Status</th><th>Prediction</th><th>Actual</th><th>Score</th><th>Winner</th><th>Goal diff</th><th>Goal err</th></tr></thead>
+            <tbody>${overviewRows(payload.rows || [])}</tbody>
+          </table>
+        </section>`;
+      setStatus("");
+    }
+    function showPredict() {
+      predictControls.style.display = "grid";
+      overview.style.display = "none";
+      predictTab.classList.add("active");
+      overviewTab.classList.remove("active");
+      setStatus(`${select.options.length} matches loaded.`);
+    }
     function render(pred) {
       const top = parseJsonish(pred.top_5_scorelines, []);
       const raw = parseJsonish(pred.moneyline_raw_prices, {});
@@ -588,6 +729,8 @@ INDEX_HTML = """<!doctype html>
     marketWeight.addEventListener("input", markCustom);
     predictButton.addEventListener("click", predict);
     refreshButton.addEventListener("click", () => loadMatches().catch(error => setStatus(error.message, true)));
+    predictTab.addEventListener("click", showPredict);
+    overviewTab.addEventListener("click", () => loadOverview().catch(error => setStatus(error.message, true)));
     loadMatches().catch(error => setStatus(error.message, true));
   </script>
 </body>
@@ -659,7 +802,15 @@ def prediction_payload(match_id: str, model_weight: float | None = None, market_
     )
     snapshot_rows = snapshot_rows_from_prediction(prediction)
     saved_rows = upsert_market_snapshot(cfg.market_snapshots_path, match_id, snapshot_rows)
+    upsert_prediction_snapshot(cfg.prediction_snapshots_path, prediction_snapshot_row(prediction))
     return {"prediction": json_safe(prediction), "market_snapshot_rows_saved": saved_rows}
+
+
+def overview_payload() -> dict[str, Any]:
+    cfg = Config()
+    state = build_state(cfg)
+    snapshots = load_prediction_snapshots(cfg.prediction_snapshots_path)
+    return json_safe(prediction_overview(state.schedule, snapshots))
 
 
 def parse_weight(value: str | None, name: str) -> float | None:
@@ -697,6 +848,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 if model_weight is not None and market_weight is not None and model_weight + market_weight <= 0:
                     raise ValueError("At least one weight must be greater than zero")
                 self.send_json(prediction_payload(match_id, model_weight=model_weight, market_weight=market_weight))
+            elif parsed.path == "/api/overview":
+                self.send_json(overview_payload())
             else:
                 self.send_json({"error": "Not found"}, status=404)
         except Exception as exc:

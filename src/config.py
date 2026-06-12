@@ -28,6 +28,7 @@ class Config:
     elo_ratings_path: Path = Path(os.getenv("ELO_RATINGS_PATH", "data/manual/elo_ratings.csv"))
     team_mapping_path: Path = Path(os.getenv("TEAM_MAPPING_PATH", "data/manual/team_name_mapping.csv"))
     market_snapshots_path: Path = Path(os.getenv("MARKET_SNAPSHOTS_PATH", "data/manual/market_snapshots.csv"))
+    prediction_snapshots_path: Path = Path(os.getenv("PREDICTION_SNAPSHOTS_PATH", "data/manual/prediction_snapshots.csv"))
 
     polymarket_gamma_base_url: str = os.getenv("POLYMARKET_GAMMA_BASE_URL", "https://gamma-api.polymarket.com")
     polymarket_clob_base_url: str = os.getenv("POLYMARKET_CLOB_BASE_URL", "https://clob.polymarket.com")

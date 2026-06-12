@@ -173,6 +173,11 @@ The dashboard also updates `data/manual/market_snapshots.csv` automatically afte
 each successful prediction. Predicting the same match again replaces the old
 rows for that match with the latest fetched Polymarket prices.
 
+It also updates `data/manual/prediction_snapshots.csv` with the displayed
+prediction for the match. The dashboard Overview tab compares saved predictions
+against played results once scores are entered in the schedule, including a
+small hit-rate chart for winner, exact score, and goal-difference accuracy.
+
 Regenerate cleaned historical data from the local raw file:
 
 ```bash
