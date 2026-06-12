@@ -22,6 +22,13 @@ Then open:
 http://127.0.0.1:8000
 ```
 
+To stop the dashboard, press `Ctrl+C` in the terminal where it is running.
+If it is running in the background on port `8000`, stop it with:
+
+```bash
+lsof -ti tcp:8000 | xargs kill
+```
+
 The dashboard uses:
 
 - `data/manual/worldcup_2026_schedule.csv`
