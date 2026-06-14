@@ -210,6 +210,11 @@ def debug_polymarket_command(args: argparse.Namespace) -> int:
     print("Request URLs:")
     for url in report.request_urls:
         print(f"- {url}")
+    if report.request_errors:
+        print("")
+        print("Request errors:")
+        for error in report.request_errors:
+            print(f"- {error}")
     print("")
     print(f"Events fetched: {report.events_fetched}")
     print(f"Markets inspected: {report.markets_inspected}")

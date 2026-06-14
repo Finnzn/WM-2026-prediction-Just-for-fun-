@@ -39,6 +39,7 @@ class Config:
     use_polymarket: bool = _bool("USE_POLYMARKET", True)
     polymarket_match_confidence_threshold: float = _float("POLYMARKET_MATCH_CONFIDENCE_THRESHOLD", 0.8)
     polymarket_cache_minutes: int = _int("POLYMARKET_CACHE_MINUTES", 10)
+    polymarket_request_timeout_seconds: float = _float("POLYMARKET_REQUEST_TIMEOUT_SECONDS", 8.0)
 
     historical_lookback_years: int = _int("HISTORICAL_LOOKBACK_YEARS", 4)
     use_older_data_as_prior: bool = _bool("USE_OLDER_DATA_AS_PRIOR", False)

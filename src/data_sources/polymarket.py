@@ -122,6 +122,7 @@ class PolymarketDebugCandidate:
 @dataclass
 class PolymarketDebugReport:
     request_urls: list[str] = field(default_factory=list)
+    request_errors: list[str] = field(default_factory=list)
     events_fetched: int = 0
     markets_inspected: int = 0
     tags_seen: list[str] = field(default_factory=list)
@@ -409,19 +410,31 @@ class PolymarketClient:
 
     def _gamma_get(self, path: str, params: dict[str, Any], debug: PolymarketDebugReport | None = None) -> Any:
         url = f"{self.cfg.polymarket_gamma_base_url.rstrip('/')}/{path.lstrip('/')}"
-        response = self.session.get(url, params=params, timeout=20)
-        if debug is not None:
-            debug.request_urls.append(response.url)
-        response.raise_for_status()
-        return response.json()
+        prepared = requests.Request("GET", url, params=params).prepare()
+        if debug is not None and prepared.url:
+            debug.request_urls.append(prepared.url)
+        try:
+            response = self.session.get(url, params=params, timeout=self.cfg.polymarket_request_timeout_seconds)
+            response.raise_for_status()
+            return response.json()
+        except (requests.RequestException, json.JSONDecodeError, ValueError) as exc:
+            if debug is not None:
+                debug.request_errors.append(f"{prepared.url or url}: {exc}")
+            raise
 
     def _clob_get(self, path: str, params: dict[str, Any], debug: PolymarketDebugReport | None = None) -> Any:
         url = f"{self.cfg.polymarket_clob_base_url.rstrip('/')}/{path.lstrip('/')}"
-        response = self.session.get(url, params=params, timeout=20)
-        if debug is not None:
-            debug.request_urls.append(response.url)
-        response.raise_for_status()
-        return response.json()
+        prepared = requests.Request("GET", url, params=params).prepare()
+        if debug is not None and prepared.url:
+            debug.request_urls.append(prepared.url)
+        try:
+            response = self.session.get(url, params=params, timeout=self.cfg.polymarket_request_timeout_seconds)
+            response.raise_for_status()
+            return response.json()
+        except (requests.RequestException, json.JSONDecodeError, ValueError) as exc:
+            if debug is not None:
+                debug.request_errors.append(f"{prepared.url or url}: {exc}")
+            raise
 
     def discover_tags_and_sports(self, debug: PolymarketDebugReport | None = None) -> None:
         if debug is None:
@@ -460,7 +473,10 @@ class PolymarketClient:
         for page in range(max_pages):
             offset = page * limit
             params = {"active": "true", "closed": "false", "limit": limit, "offset": offset}
-            rows = self._gamma_get("/events", params, debug)
+            try:
+                rows = self._gamma_get("/events", params, debug)
+            except (requests.RequestException, json.JSONDecodeError, ValueError):
+                break
             if not isinstance(rows, list) or not rows:
                 break
             events.extend([row for row in rows if isinstance(row, dict)])
@@ -558,23 +574,7 @@ class PolymarketClient:
         max_pages: int,
         refresh: bool,
     ) -> list[dict[str, Any]]:
-        events: list[dict[str, Any]] = []
-        seen: set[str] = set()
-        for slug in self.event_slug_candidates(home_team, away_team, match_date):
-            event = self.fetch_event_by_slug(slug, debug)
-            if event is not None:
-                for candidate_slug in [slug, f"{slug}-more-markets"]:
-                    candidate_event = event if candidate_slug == slug else self.fetch_event_by_slug(candidate_slug, debug)
-                    if candidate_event is None:
-                        continue
-                    event_slug = str(candidate_event.get("slug", candidate_slug))
-                    if event_slug not in seen:
-                        seen.add(event_slug)
-                        events.append(candidate_event)
-                debug.events_fetched = len(events)
-                return events
-        events = self.fetch_worldcup_events(debug, max_pages=max_pages)
-        return events
+        return self.fetch_worldcup_events(debug, max_pages=max_pages)
 
     def _priced_token(self, token: OutcomeToken, market: dict[str, Any], debug: PolymarketDebugReport | None) -> OutcomeToken:
         token.book_url = f"{self.cfg.polymarket_clob_base_url.rstrip()}/book?token_id={token.token_id}"
