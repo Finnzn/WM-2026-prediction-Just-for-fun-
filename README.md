@@ -199,7 +199,7 @@ python3 scripts/ingest_historical_results.py
 This project uses the following external data sources:
 
 - Elo ratings: https://www.eloratings.net/2026_World_Cup
-- World Cup 2026 schedule: https://www.eloratings.net/2026_World_Cup
+- World Cup 2026 schedule and results: https://www.fifa.com/en/tournaments/mens/worldcup/canadamexicousa2026/scores-fixtures?country=CH&wtw-filter=ALL
 - Historical international results: https://www.kaggle.com/datasets/martj42/international-football-results-from-1872-to-2017?resource=download
 
 ## Data Policy
