@@ -218,8 +218,14 @@ def evaluate_market_snapshots(snapshots: pd.DataFrame, schedule: pd.DataFrame) -
         "total_details": total_rows,
         "team_total_details": team_total_rows,
         "spread_details": spread_rows,
-        "warning": "Only use this as a diagnostic. Two matches are far too few to calibrate weights.",
+        "warning": _market_backtest_warning(len(moneyline_rows)),
     }
+
+
+def _market_backtest_warning(matches: int) -> str:
+    if matches < 30:
+        return f"Only use this as a diagnostic. {matches} matches are still too few to calibrate weights reliably."
+    return "Use this as a calibration diagnostic, not as automatic proof that one fixed weight is optimal."
 
 
 def _evaluate_moneyline_snapshot(match_id: str, rows: pd.DataFrame, match: Any) -> dict[str, Any]:
