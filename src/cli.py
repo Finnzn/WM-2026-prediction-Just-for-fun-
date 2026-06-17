@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 from pathlib import Path
 
 import pandas as pd
@@ -13,6 +14,12 @@ from src.data_sources.schedule import load_schedule, validate_schedule
 from src.data_sources.team_mapping import TeamNameMapper
 from src.models.backtesting import evaluate_market_snapshots, simple_backtest, walk_forward_model_backtest
 from src.models.predictor import build_state, predict_all, predict_match_row, prediction_report, skip_reason
+from src.models.poisson_model import estimate_lambdas, prediction_from_lambdas, prediction_from_matrix
+from src.markets.moneyline import blend_moneyline
+from src.markets.spread import calibrate_spread
+from src.markets.totals import calibrate_team_total, calibrate_total
+from src.markets.wdl import calibrate_wdl
+from src.utils import normalize_probabilities
 
 
 OUTPUT_COLUMNS = [
@@ -261,6 +268,345 @@ def market_backtest_command(_: argparse.Namespace) -> int:
     return 0
 
 
+def calibrate_weights_command(args: argparse.Namespace) -> int:
+    cfg = Config()
+    mapper = TeamNameMapper(cfg.team_mapping_path)
+    if not cfg.market_snapshots_path.exists():
+        print(f"Missing market snapshot file: {cfg.market_snapshots_path}")
+        return 1
+
+    schedule = load_schedule(cfg.schedule_path, mapper)
+    snapshots = pd.read_csv(cfg.market_snapshots_path, dtype=str, keep_default_na=False)
+    snapshots["probability"] = pd.to_numeric(snapshots["probability"], errors="coerce")
+    rows = _moneyline_calibration_rows(schedule, snapshots, cfg, args.max_match_id, set(args.exclude))
+    grid = [_blend_metrics(rows, market_weight / 100) for market_weight in range(0, 101, args.step)]
+    fine = [_blend_metrics(rows, market_weight / 100) for market_weight in range(101)]
+    best_log_loss = min(fine, key=lambda row: row["log_loss"]) if fine else {}
+    best_brier = min(fine, key=lambda row: row["brier"]) if fine else {}
+    report = {
+        "scope": {
+            "max_match_id": args.max_match_id,
+            "excluded_match_ids": sorted(args.exclude),
+            "matches_used": len(rows),
+            "match_ids_used": [row["match_id"] for row in rows],
+        },
+        "baselines": {
+            "model_only": _blend_metrics(rows, 0.0),
+            "current_live_70_market": _blend_metrics(rows, 0.7),
+            "market_only": _blend_metrics(rows, 1.0),
+        },
+        "best_by_log_loss": best_log_loss,
+        "best_by_brier": best_brier,
+        "grid": grid,
+        "warning": (
+            "Diagnostic only. Fewer than 30 matches is too small for a stable default-weight change."
+            if len(rows) < 30
+            else "Use as calibration evidence, but validate against future matches before changing defaults."
+        ),
+    }
+    print(json.dumps(report, indent=2, ensure_ascii=False))
+    return 0
+
+
+def calibrate_market_weights_command(args: argparse.Namespace) -> int:
+    cfg = Config()
+    mapper = TeamNameMapper(cfg.team_mapping_path)
+    if not cfg.market_snapshots_path.exists():
+        print(f"Missing market snapshot file: {cfg.market_snapshots_path}")
+        return 1
+
+    schedule = load_schedule(cfg.schedule_path, mapper)
+    snapshots = pd.read_csv(cfg.market_snapshots_path, dtype=str, keep_default_na=False)
+    snapshots["probability"] = pd.to_numeric(snapshots["probability"], errors="coerce")
+    snapshots["line"] = pd.to_numeric(snapshots["line"], errors="coerce")
+    matches = _market_calibration_matches(schedule, snapshots, cfg, args.max_match_id, set(args.exclude))
+    candidates = _float_candidates(args.candidates)
+    results = []
+    for total_weight in candidates:
+        for team_total_weight in candidates:
+            for spread_weight in candidates:
+                results.append(
+                    _score_market_line_weights(
+                        matches,
+                        total_weight=total_weight,
+                        team_total_weight=team_total_weight,
+                        spread_weight=spread_weight,
+                        moneyline_market_weight=args.moneyline_market_weight,
+                    )
+                )
+    best_score = min(results, key=lambda row: (row["score_log_loss"], row["average_goal_error"])) if results else {}
+    best_goal_error = min(results, key=lambda row: (row["average_goal_error"], row["score_log_loss"])) if results else {}
+    current = _score_market_line_weights(
+        matches,
+        total_weight=cfg.total_calibration_weight,
+        team_total_weight=cfg.team_total_calibration_weight,
+        spread_weight=cfg.spread_calibration_weight,
+        moneyline_market_weight=args.moneyline_market_weight,
+    )
+    report = {
+        "scope": {
+            "max_match_id": args.max_match_id,
+            "excluded_match_ids": sorted(args.exclude),
+            "matches_used": len(matches),
+            "match_ids_used": [row["match_id"] for row in matches],
+            "moneyline_market_weight_fixed_at": args.moneyline_market_weight,
+        },
+        "current_weights": current,
+        "best_by_score_log_loss": best_score,
+        "best_by_goal_error": best_goal_error,
+        "top_10_by_score_log_loss": sorted(results, key=lambda row: row["score_log_loss"])[:10],
+        "warning": (
+            "Diagnostic only. Fewer than 30 matches is too small for a stable market-line weight change."
+            if len(matches) < 30
+            else "Use as calibration evidence, but validate against future matches before changing defaults."
+        ),
+    }
+    print(json.dumps(report, indent=2, ensure_ascii=False))
+    return 0
+
+
+def _moneyline_calibration_rows(
+    schedule: pd.DataFrame,
+    snapshots: pd.DataFrame,
+    cfg: Config,
+    max_match_id: str,
+    excluded: set[str],
+) -> list[dict[str, object]]:
+    played = schedule[schedule["status"].eq("played")].copy()
+    played["match_num"] = pd.to_numeric(played["match_id"].str.extract(r"M(\d+)", expand=False), errors="coerce")
+    max_num = int(str(max_match_id).lstrip("M"))
+    played = played[played["match_num"].le(max_num) & ~played["match_id"].isin(excluded)].sort_values("match_num")
+    rows: list[dict[str, object]] = []
+    for match in played.itertuples(index=False):
+        match_id = str(match.match_id)
+        moneyline = snapshots[snapshots["match_id"].eq(match_id) & snapshots["market_type"].eq("moneyline")]
+        if len(moneyline) < 3:
+            continue
+
+        state = build_state(cfg, as_of=str(match.date), exclusive=True)
+        schedule_row = state.schedule[state.schedule["match_id"].eq(match_id)].iloc[0]
+        prediction = predict_match_row(schedule_row, state, cfg, no_markets=True)
+        model_probs = [
+            float(prediction["home_win_prob"]),
+            float(prediction["draw_prob"]),
+            float(prediction["away_win_prob"]),
+        ]
+
+        home = str(match.home_team)
+        away = str(match.away_team)
+        raw_market = {str(row.team): float(row.probability) for row in moneyline.itertuples(index=False)}
+        market_values = [raw_market.get(home), raw_market.get("Draw"), raw_market.get(away)]
+        if any(value is None or pd.isna(value) for value in market_values):
+            continue
+        market_probs = normalize_probabilities([float(value) for value in market_values])
+
+        home_score = int(match.home_score)
+        away_score = int(match.away_score)
+        actual_idx = 0 if home_score > away_score else 1 if home_score == away_score else 2
+        rows.append(
+            {
+                "match_id": match_id,
+                "actual_idx": actual_idx,
+                "model_probs": model_probs,
+                "market_probs": market_probs,
+            }
+        )
+    return rows
+
+
+def _market_calibration_matches(
+    schedule: pd.DataFrame,
+    snapshots: pd.DataFrame,
+    cfg: Config,
+    max_match_id: str,
+    excluded: set[str],
+) -> list[dict[str, object]]:
+    played = schedule[schedule["status"].eq("played")].copy()
+    played["match_num"] = pd.to_numeric(played["match_id"].str.extract(r"M(\d+)", expand=False), errors="coerce")
+    max_num = int(str(max_match_id).lstrip("M"))
+    played = played[played["match_num"].le(max_num) & ~played["match_id"].isin(excluded)].sort_values("match_num")
+    matches: list[dict[str, object]] = []
+    for match in played.itertuples(index=False):
+        match_id = str(match.match_id)
+        rows = snapshots[snapshots["match_id"].eq(match_id)].copy()
+        if rows.empty:
+            continue
+        state = build_state(cfg, as_of=str(match.date), exclusive=True)
+        schedule_row = state.schedule[state.schedule["match_id"].eq(match_id)].iloc[0]
+        home = str(match.home_team)
+        away = str(match.away_team)
+        global_home, global_away = state.effective_results["home_score"].mean(), state.effective_results["away_score"].mean()
+        neutral = str(schedule_row.get("neutral", "true")).strip().lower() in {"true", "1", "yes", ""}
+        lambda_home, lambda_away = estimate_lambdas(
+            home,
+            away,
+            state.elo_ratings,
+            state.team_stats,
+            max(0.4, float(global_home)),
+            max(0.4, float(global_away)),
+            neutral,
+            cfg,
+        )
+        base = prediction_from_lambdas(lambda_home, lambda_away, cfg.max_goals)
+        matrix = base.pop("matrix")
+        matches.append(
+            {
+                "match_id": match_id,
+                "home_team": home,
+                "away_team": away,
+                "home_score": int(match.home_score),
+                "away_score": int(match.away_score),
+                "matrix": matrix,
+                "totals": [
+                    (float(row.line), float(row.probability))
+                    for row in rows[rows["market_type"].eq("total")].dropna(subset=["line", "probability"]).itertuples(index=False)
+                ],
+                "team_totals": [
+                    (str(row.team), float(row.line), float(row.probability))
+                    for row in rows[rows["market_type"].eq("team_total")].dropna(subset=["line", "probability"]).itertuples(index=False)
+                ],
+                "spreads": [
+                    (str(row.team), float(row.line), float(row.probability))
+                    for row in rows[rows["market_type"].eq("spread")].dropna(subset=["line", "probability"]).itertuples(index=False)
+                ],
+                "moneyline": {
+                    str(row.team): float(row.probability)
+                    for row in rows[rows["market_type"].eq("moneyline")].dropna(subset=["probability"]).itertuples(index=False)
+                },
+            }
+        )
+    return matches
+
+
+def _score_market_line_weights(
+    matches: list[dict[str, object]],
+    total_weight: float,
+    team_total_weight: float,
+    spread_weight: float,
+    moneyline_market_weight: float,
+) -> dict[str, float]:
+    if not matches:
+        return _empty_market_line_score(total_weight, team_total_weight, spread_weight)
+    exact = 0
+    goal_error = 0.0
+    score_log_loss = 0.0
+    wdl_log_loss = 0.0
+    wdl_brier = 0.0
+    for match in matches:
+        matrix = match["matrix"].copy()
+        home = str(match["home_team"])
+        away = str(match["away_team"])
+        total_rows = match["totals"]
+        team_total_rows = match["team_totals"]
+        spread_rows = match["spreads"]
+
+        total_budget = total_weight * (0.6 if len(team_total_rows) else 1.0)
+        total_per_line = min(total_budget / max(1, len(total_rows)), 0.08)
+        team_total_per_line = min(team_total_weight / max(1, len(team_total_rows)), 0.06)
+        spread_per_line = min(spread_weight / max(1, len(spread_rows)), 0.06)
+
+        for line, probability in total_rows:
+            matrix = calibrate_total(matrix, line, probability, total_per_line)
+        for team, line, probability in team_total_rows:
+            if team not in {home, away}:
+                continue
+            matrix = calibrate_team_total(matrix, team == home, line, probability, team_total_per_line)
+        for team, line, probability in spread_rows:
+            if team not in {home, away}:
+                continue
+            matrix = calibrate_spread(matrix, team == home, line, probability, spread_per_line)
+
+        raw = match["moneyline"]
+        if len(raw) >= 3 and moneyline_market_weight > 0:
+            values = [raw.get(home), raw.get("Draw"), raw.get(away)]
+            if not any(value is None or pd.isna(value) for value in values):
+                pred = prediction_from_matrix(matrix)
+                model_probs = (float(pred["home_win_prob"]), float(pred["draw_prob"]), float(pred["away_win_prob"]))
+                market_probs = normalize_probabilities([float(value) for value in values])
+                target = blend_moneyline(model_probs, tuple(market_probs), 1 - moneyline_market_weight, moneyline_market_weight)
+                matrix = calibrate_wdl(matrix, target)
+
+        pred = prediction_from_matrix(matrix)
+        home_score = int(match["home_score"])
+        away_score = int(match["away_score"])
+        actual_idx = 0 if home_score > away_score else 1 if home_score == away_score else 2
+        wdl_probs = [float(pred["home_win_prob"]), float(pred["draw_prob"]), float(pred["away_win_prob"])]
+        score_prob = float(matrix[home_score, away_score]) if home_score < matrix.shape[0] and away_score < matrix.shape[1] else 1e-12
+        exact += int(int(pred["predicted_home_goals"]) == home_score and int(pred["predicted_away_goals"]) == away_score)
+        goal_error += abs(float(pred["expected_home_goals"]) - home_score) + abs(float(pred["expected_away_goals"]) - away_score)
+        score_log_loss += -math.log(max(1e-12, score_prob))
+        wdl_log_loss += -math.log(max(1e-12, wdl_probs[actual_idx]))
+        wdl_brier += sum((wdl_probs[i] - (1.0 if i == actual_idx else 0.0)) ** 2 for i in range(3))
+    count = len(matches)
+    return {
+        "total_calibration_weight": round(total_weight, 3),
+        "team_total_calibration_weight": round(team_total_weight, 3),
+        "spread_calibration_weight": round(spread_weight, 3),
+        "matches": float(count),
+        "exact_score_hit_rate": exact / count,
+        "average_goal_error": goal_error / count,
+        "score_log_loss": score_log_loss / count,
+        "wdl_log_loss": wdl_log_loss / count,
+        "wdl_brier": wdl_brier / count,
+    }
+
+
+def _empty_market_line_score(total_weight: float, team_total_weight: float, spread_weight: float) -> dict[str, float]:
+    return {
+        "total_calibration_weight": round(total_weight, 3),
+        "team_total_calibration_weight": round(team_total_weight, 3),
+        "spread_calibration_weight": round(spread_weight, 3),
+        "matches": 0.0,
+        "exact_score_hit_rate": 0.0,
+        "average_goal_error": 0.0,
+        "score_log_loss": 0.0,
+        "wdl_log_loss": 0.0,
+        "wdl_brier": 0.0,
+    }
+
+
+def _float_candidates(text: str) -> list[float]:
+    return sorted({float(item.strip()) for item in text.split(",") if item.strip()})
+
+
+def _blend_metrics(rows: list[dict[str, object]], market_weight: float) -> dict[str, float]:
+    if not rows:
+        return {
+            "model_weight": round(1 - market_weight, 2),
+            "market_weight": round(market_weight, 2),
+            "matches": 0.0,
+            "accuracy": 0.0,
+            "log_loss": 0.0,
+            "brier": 0.0,
+        }
+    model_weight = 1 - market_weight
+    correct = 0
+    log_loss = 0.0
+    brier = 0.0
+    for row in rows:
+        model_probs = row["model_probs"]
+        market_probs = row["market_probs"]
+        actual_idx = int(row["actual_idx"])
+        probs = normalize_probabilities(
+            [
+                float(model_probs[i]) * model_weight + float(market_probs[i]) * market_weight
+                for i in range(3)
+            ]
+        )
+        correct += int(max(range(3), key=lambda index: probs[index]) == actual_idx)
+        log_loss += -math.log(max(1e-12, probs[actual_idx]))
+        brier += sum((probs[i] - (1.0 if i == actual_idx else 0.0)) ** 2 for i in range(3))
+    count = len(rows)
+    return {
+        "model_weight": round(model_weight, 2),
+        "market_weight": round(market_weight, 2),
+        "matches": float(count),
+        "accuracy": correct / count,
+        "log_loss": log_loss / count,
+        "brier": brier / count,
+    }
+
+
 def export_command(_: argparse.Namespace) -> int:
     path = Path("outputs/predictions.csv")
     if not path.exists():
@@ -319,6 +665,17 @@ def build_parser() -> argparse.ArgumentParser:
     backtest.add_argument("--max-matches", type=int, default=250)
     backtest.set_defaults(func=backtest_command)
     sub.add_parser("market-backtest").set_defaults(func=market_backtest_command)
+    calibration = sub.add_parser("calibrate-weights")
+    calibration.add_argument("--max-match-id", default="M020")
+    calibration.add_argument("--exclude", nargs="*", default=["M001", "M002", "M008"])
+    calibration.add_argument("--step", type=int, default=5)
+    calibration.set_defaults(func=calibrate_weights_command)
+    market_calibration = sub.add_parser("calibrate-market-weights")
+    market_calibration.add_argument("--max-match-id", default="M020")
+    market_calibration.add_argument("--exclude", nargs="*", default=["M001", "M002", "M008"])
+    market_calibration.add_argument("--candidates", default="0,0.1,0.2,0.25,0.3,0.35,0.4")
+    market_calibration.add_argument("--moneyline-market-weight", type=float, default=0.7)
+    market_calibration.set_defaults(func=calibrate_market_weights_command)
     sub.add_parser("export").set_defaults(func=export_command)
     return parser
 

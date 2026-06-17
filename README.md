@@ -67,6 +67,21 @@ For each selected scheduled match, the program:
 60% Polymarket moneyline
 ```
 
+For the live dashboard moneyline blend, the default remains:
+
+```text
+30% statistical model
+70% Polymarket moneyline
+```
+
+The current conservative score-matrix market weights are:
+
+```text
+Full-match totals: 20%
+Team totals:       30%
+Spreads:           30%
+```
+
 The schedule is the source of truth for World Cup 2026 state. When a match is played, edit:
 
 ```text
@@ -128,8 +143,10 @@ probability mass toward scorelines where the selected team covers the line. The
 final moneyline calibration is applied last, then the displayed score is selected
 as the highest-probability exact scoreline.
 
-The market-line weights are still heuristic. Use the backtest commands below to
-evaluate the statistical model and saved market snapshots.
+The market-line weights are conservative calibrated defaults from the first
+played-match diagnostics, not final optimized values. Use the backtest commands
+below to evaluate the statistical model and saved market snapshots as more
+matches are played.
 
 If exact slug lookup fails, the client falls back to paginated Gamma event discovery:
 
@@ -177,6 +194,29 @@ Evaluate saved pre-match market snapshots:
 ```bash
 python3 -m src.cli market-backtest
 ```
+
+Run the current moneyline weight calibration diagnostic:
+
+```bash
+python3 -m src.cli calibrate-weights --max-match-id M020 --exclude M001 M002 M008
+```
+
+This compares model-only W/D/L probabilities with saved Polymarket moneyline
+probabilities and searches the model/market blend by log loss and Brier score.
+Treat it as a diagnostic until there are at least 30 played matches with saved
+market snapshots.
+
+Run the market-line weight calibration diagnostic:
+
+```bash
+python3 -m src.cli calibrate-market-weights --max-match-id M020 --exclude M001 M002 M008
+```
+
+This searches the full-match total, team-total, and spread calibration weights
+against the saved pre-match market snapshots. It evaluates exact-score hit rate,
+average goal error, exact-score log loss, and W/D/L log loss. Keep this
+diagnostic separate from the moneyline blend because these line markets reshape
+the score matrix, while moneyline mainly controls W/D/L probabilities.
 
 The dashboard updates `data/manual/market_snapshots.csv` automatically after
 each successful prediction. Predicting the same match again replaces the old
