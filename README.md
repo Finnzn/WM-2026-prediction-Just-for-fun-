@@ -78,9 +78,14 @@ The current conservative score-matrix market weights are:
 
 ```text
 Full-match totals: 20%
-Team totals:       30%
+Team totals:       40%
 Spreads:           30%
 ```
+
+When team-total markets are available for both teams, the model skips
+full-match totals for that prediction to avoid double-counting the same goal
+volume signal. Full-match totals remain a fallback when team totals are missing
+or incomplete.
 
 The schedule is the source of truth for World Cup 2026 state. When a match is played, edit:
 
@@ -137,11 +142,12 @@ For `M001`, the useful moneyline markets are the three binary outcome markets:
 
 The model normalizes those three implied probabilities into home/draw/away probabilities.
 Full-match over/under, team-total, and spread markets are also parsed when
-available. Totals push probability mass toward lower or higher aggregate
-scorelines, team totals shape each team's goal distribution, and spreads push
-probability mass toward scorelines where the selected team covers the line. The
-final moneyline calibration is applied last, then the displayed score is selected
-as the highest-probability exact scoreline.
+available. Team totals shape each team's goal distribution. Full-match totals
+push probability mass toward lower or higher aggregate scorelines only when
+team totals are missing or incomplete. Spreads push probability mass toward
+scorelines where the selected team covers the line. The final moneyline
+calibration is applied last, then the displayed score is selected as the
+highest-probability exact scoreline.
 
 The market-line weights are conservative calibrated defaults from the first
 played-match diagnostics, not final optimized values. Use the backtest commands
@@ -217,6 +223,11 @@ against the saved pre-match market snapshots. It evaluates exact-score hit rate,
 average goal error, exact-score log loss, and W/D/L log loss. Keep this
 diagnostic separate from the moneyline blend because these line markets reshape
 the score matrix, while moneyline mainly controls W/D/L probabilities.
+
+The market-line calibration report includes a raw best result, a regularized
+best result, and recommended shrunk weights. The shrunk recommendation blends
+the data-fitted result back toward the current defaults so that a small match
+sample cannot force extreme changes.
 
 The dashboard updates `data/manual/market_snapshots.csv` automatically after
 each successful prediction. Predicting the same match again replaces the old

@@ -19,6 +19,9 @@ COLUMNS = [
     "away_win_prob",
     "model_weight",
     "market_weight",
+    "total_calibration_weight",
+    "team_total_calibration_weight",
+    "spread_calibration_weight",
 ]
 
 
@@ -39,6 +42,9 @@ def prediction_snapshot_row(prediction: dict[str, Any], snapshot_date: str | Non
         "away_win_prob": prediction.get("away_win_prob", ""),
         "model_weight": prediction.get("model_weight", ""),
         "market_weight": prediction.get("moneyline_market_weight", ""),
+        "total_calibration_weight": prediction.get("total_calibration_weight", ""),
+        "team_total_calibration_weight": prediction.get("team_total_calibration_weight", ""),
+        "spread_calibration_weight": prediction.get("spread_calibration_weight", ""),
     }
 
 

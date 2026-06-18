@@ -112,6 +112,11 @@ def _head_to_head_summary(results: pd.DataFrame, home: str, away: str) -> dict[s
     return {"matches": int(len(pair)), "home_wins": home_wins, "draws": draws, "away_wins": away_wins}
 
 
+def _has_team_totals_for_both_sides(team_total_signals: list[dict[str, Any]]) -> bool:
+    sides = {bool(signal.get("team_is_home")) for signal in team_total_signals}
+    return sides == {False, True}
+
+
 def predict_match_row(
     row: pd.Series,
     state: ModelState,
@@ -155,11 +160,12 @@ def predict_match_row(
         total_signals = market_signals.get("totals") or []
         team_total_signals = market_signals.get("team_totals") or []
         spread_signals = market_signals.get("spreads") or []
-        total_budget = cfg.total_calibration_weight * (0.6 if team_total_signals else 1.0)
+        has_both_team_totals = _has_team_totals_for_both_sides(team_total_signals)
+        total_budget = 0.0 if has_both_team_totals else cfg.total_calibration_weight
         total_weight = min(total_budget / max(1, len(total_signals)), 0.08)
         team_total_weight = min(cfg.team_total_calibration_weight / max(1, len(team_total_signals)), 0.06)
         spread_weight = min(cfg.spread_calibration_weight / max(1, len(spread_signals)), 0.06)
-        if total_signals:
+        if total_signals and total_weight > 0:
             total_notes: list[str] = []
             for total_signal in total_signals:
                 matrix = calibrate_total(
@@ -181,6 +187,8 @@ def predict_match_row(
                 + ", ".join(total_notes)
                 + f" (weight each {total_weight:.2f})"
             )
+        elif total_signals and has_both_team_totals:
+            notes.append("Polymarket full-match totals skipped because team totals are available for both teams")
         if team_total_signals:
             team_total_notes: list[str] = []
             for team_total_signal in team_total_signals:

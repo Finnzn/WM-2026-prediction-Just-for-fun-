@@ -336,6 +336,31 @@ def calibrate_market_weights_command(args: argparse.Namespace) -> int:
                 )
     best_score = min(results, key=lambda row: (row["score_log_loss"], row["average_goal_error"])) if results else {}
     best_goal_error = min(results, key=lambda row: (row["average_goal_error"], row["score_log_loss"])) if results else {}
+    prior = {
+        "total_calibration_weight": cfg.total_calibration_weight,
+        "team_total_calibration_weight": cfg.team_total_calibration_weight,
+        "spread_calibration_weight": cfg.spread_calibration_weight,
+    }
+    regularized = [
+        row
+        | {
+            "regularized_objective": _regularized_market_line_objective(
+                row,
+                prior,
+                args.regularization_strength,
+            )
+        }
+        for row in results
+    ]
+    best_regularized = min(regularized, key=lambda row: (row["regularized_objective"], row["score_log_loss"])) if regularized else {}
+    recommended_weights = _shrunk_market_line_weights(best_regularized, prior, len(matches), args.shrinkage_matches)
+    recommended = _score_market_line_weights(
+        matches,
+        total_weight=recommended_weights["total_calibration_weight"],
+        team_total_weight=recommended_weights["team_total_calibration_weight"],
+        spread_weight=recommended_weights["spread_calibration_weight"],
+        moneyline_market_weight=args.moneyline_market_weight,
+    )
     current = _score_market_line_weights(
         matches,
         total_weight=cfg.total_calibration_weight,
@@ -350,15 +375,22 @@ def calibrate_market_weights_command(args: argparse.Namespace) -> int:
             "matches_used": len(matches),
             "match_ids_used": [row["match_id"] for row in matches],
             "moneyline_market_weight_fixed_at": args.moneyline_market_weight,
+            "regularization_strength": args.regularization_strength,
+            "shrinkage_matches": args.shrinkage_matches,
         },
+        "prior_weights": prior,
         "current_weights": current,
-        "best_by_score_log_loss": best_score,
+        "raw_best_by_score_log_loss": best_score,
         "best_by_goal_error": best_goal_error,
+        "best_regularized": best_regularized,
+        "recommended_shrunk_weights": recommended_weights,
+        "recommended_shrunk_performance": recommended,
         "top_10_by_score_log_loss": sorted(results, key=lambda row: row["score_log_loss"])[:10],
+        "top_10_regularized": sorted(regularized, key=lambda row: row["regularized_objective"])[:10],
         "warning": (
             "Diagnostic only. Fewer than 30 matches is too small for a stable market-line weight change."
             if len(matches) < 30
-            else "Use as calibration evidence, but validate against future matches before changing defaults."
+            else "Prefer the recommended shrunk weights over the raw optimum unless future matches confirm a larger move."
         ),
     }
     print(json.dumps(report, indent=2, ensure_ascii=False))
@@ -500,13 +532,16 @@ def _score_market_line_weights(
         team_total_rows = match["team_totals"]
         spread_rows = match["spreads"]
 
-        total_budget = total_weight * (0.6 if len(team_total_rows) else 1.0)
+        team_total_sides = {team == home for team, _, _ in team_total_rows if team in {home, away}}
+        has_both_team_totals = team_total_sides == {False, True}
+        total_budget = 0.0 if has_both_team_totals else total_weight
         total_per_line = min(total_budget / max(1, len(total_rows)), 0.08)
         team_total_per_line = min(team_total_weight / max(1, len(team_total_rows)), 0.06)
         spread_per_line = min(spread_weight / max(1, len(spread_rows)), 0.06)
 
-        for line, probability in total_rows:
-            matrix = calibrate_total(matrix, line, probability, total_per_line)
+        if total_per_line > 0:
+            for line, probability in total_rows:
+                matrix = calibrate_total(matrix, line, probability, total_per_line)
         for team, line, probability in team_total_rows:
             if team not in {home, away}:
                 continue
@@ -563,6 +598,33 @@ def _empty_market_line_score(total_weight: float, team_total_weight: float, spre
         "wdl_log_loss": 0.0,
         "wdl_brier": 0.0,
     }
+
+
+def _regularized_market_line_objective(
+    row: dict[str, float],
+    prior: dict[str, float],
+    regularization_strength: float,
+) -> float:
+    distance = sum(
+        (float(row[key]) - float(prior[key])) ** 2
+        for key in ["total_calibration_weight", "team_total_calibration_weight", "spread_calibration_weight"]
+    )
+    return float(row["score_log_loss"]) + regularization_strength * distance
+
+
+def _shrunk_market_line_weights(
+    target: dict[str, float],
+    prior: dict[str, float],
+    matches: int,
+    shrinkage_matches: int,
+) -> dict[str, float]:
+    if not target:
+        return {key: round(float(value), 3) for key, value in prior.items()}
+    data_weight = matches / max(matches + shrinkage_matches, 1)
+    return {
+        key: round(float(prior[key]) * (1 - data_weight) + float(target[key]) * data_weight, 3)
+        for key in ["total_calibration_weight", "team_total_calibration_weight", "spread_calibration_weight"]
+    } | {"data_weight": round(data_weight, 3)}
 
 
 def _float_candidates(text: str) -> list[float]:
@@ -675,6 +737,8 @@ def build_parser() -> argparse.ArgumentParser:
     market_calibration.add_argument("--exclude", nargs="*", default=["M001", "M002", "M008"])
     market_calibration.add_argument("--candidates", default="0,0.1,0.2,0.25,0.3,0.35,0.4")
     market_calibration.add_argument("--moneyline-market-weight", type=float, default=0.7)
+    market_calibration.add_argument("--regularization-strength", type=float, default=0.25)
+    market_calibration.add_argument("--shrinkage-matches", type=int, default=30)
     market_calibration.set_defaults(func=calibrate_market_weights_command)
     sub.add_parser("export").set_defaults(func=export_command)
     return parser

@@ -21,11 +21,17 @@ def test_prediction_snapshot_row_from_prediction():
             "away_win_prob": 0.25,
             "model_weight": 0.3,
             "moneyline_market_weight": 0.7,
+            "total_calibration_weight": 0.2,
+            "team_total_calibration_weight": 0.4,
+            "spread_calibration_weight": 0.3,
             "market_timestamp": "2026-06-12T10:00:00+00:00",
         }
     )
     assert row["predicted_score"] == "2-1"
     assert row["snapshot_date"] == "2026-06-12"
+    assert row["total_calibration_weight"] == 0.2
+    assert row["team_total_calibration_weight"] == 0.4
+    assert row["spread_calibration_weight"] == 0.3
 
 
 def test_upsert_prediction_snapshot_replaces_existing_match(tmp_path):

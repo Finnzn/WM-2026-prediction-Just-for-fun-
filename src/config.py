@@ -55,7 +55,7 @@ class Config:
     live_moneyline_market_weight: float = _float("LIVE_MONEYLINE_MARKET_WEIGHT", 0.7)
     spread_calibration_weight: float = _float("SPREAD_CALIBRATION_WEIGHT", 0.30)
     total_calibration_weight: float = _float("TOTAL_CALIBRATION_WEIGHT", 0.20)
-    team_total_calibration_weight: float = _float("TEAM_TOTAL_CALIBRATION_WEIGHT", 0.30)
+    team_total_calibration_weight: float = _float("TEAM_TOTAL_CALIBRATION_WEIGHT", 0.40)
     use_futures_as_team_strength: bool = _bool("USE_FUTURES_AS_TEAM_STRENGTH", False)
 
     max_goals: int = _int("MAX_GOALS", 6)
