@@ -151,6 +151,9 @@ def predict_match_row(
     total_info: dict[str, Any] = {}
     team_total_info: dict[str, Any] = {}
     notes: list[str] = []
+    total_calibration_weight_used = 0.0
+    team_total_calibration_weight_used = 0.0
+    spread_calibration_weight_used = 0.0
     mw = 1.0 if model_weight is None else model_weight
     kw = 0.0 if market_weight is None else market_weight
     if not no_markets and cfg.use_polymarket:
@@ -176,6 +179,7 @@ def predict_match_row(
                 )
                 total_notes.append(f"{total_signal['line']}={float(total_signal['over_probability']):.1%}")
             total_used = True
+            total_calibration_weight_used = total_budget
             total_info = total_signals[0] | {"lines_used": total_signals, "per_line_weight": total_weight}
             market_used = True
             market_source = "polymarket_gamma_events_clob"
@@ -203,6 +207,7 @@ def predict_match_row(
                     f"{team_total_signal['team']} {team_total_signal['line']}={float(team_total_signal['over_probability']):.1%}"
                 )
             team_total_used = True
+            team_total_calibration_weight_used = cfg.team_total_calibration_weight
             team_total_info = team_total_signals[0] | {"lines_used": team_total_signals, "per_line_weight": team_total_weight}
             market_used = True
             market_source = "polymarket_gamma_events_clob"
@@ -228,6 +233,7 @@ def predict_match_row(
                     f"{spread_signal['team']} {float(spread_signal['line']):+g}={float(spread_signal['cover_probability']):.1%}"
                 )
             spread_used = True
+            spread_calibration_weight_used = cfg.spread_calibration_weight
             spread_info = spread_signals[0] | {"lines_used": spread_signals, "per_line_weight": spread_weight}
             market_used = True
             market_source = "polymarket_gamma_events_clob"
@@ -295,9 +301,9 @@ def predict_match_row(
             "status": row.get("status", ""),
             "model_weight": mw,
             "moneyline_market_weight": kw if moneyline_used else 0.0,
-            "spread_calibration_weight": cfg.spread_calibration_weight,
-            "total_calibration_weight": cfg.total_calibration_weight,
-            "team_total_calibration_weight": cfg.team_total_calibration_weight,
+            "spread_calibration_weight": spread_calibration_weight_used,
+            "total_calibration_weight": total_calibration_weight_used,
+            "team_total_calibration_weight": team_total_calibration_weight_used,
             "market_data_used": market_used,
             "market_source": market_source,
             "market_timestamp": market_timestamp,

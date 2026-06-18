@@ -430,6 +430,9 @@ INDEX_HTML = """<!doctype html>
       const number = Number(value || 0);
       return `${(number * 100).toFixed(1)}%`;
     }
+    function appliedWeight(lines, value) {
+      return lines.length ? `each ${pct(value)}` : "not used";
+    }
     function fixed(value, digits = 2) {
       const number = Number(value || 0);
       return number.toFixed(digits);
@@ -701,21 +704,21 @@ INDEX_HTML = """<!doctype html>
             </table>
           </section>
           <section class="panel">
-            <div class="panel-head"><h2>Totals Used</h2><span class="pill">each ${pct(pred.total_per_line_weight)}</span></div>
+            <div class="panel-head"><h2>Totals Used</h2><span class="pill">${appliedWeight(totalLines, pred.total_per_line_weight)}</span></div>
             <table>
               <thead><tr><th>Line</th><th>Over prob</th><th>Over raw</th><th>Under raw</th></tr></thead>
               <tbody>${totalLineRows(totalLines)}</tbody>
             </table>
           </section>
           <section class="panel">
-            <div class="panel-head"><h2>Team Totals Used</h2><span class="pill">each ${pct(pred.team_total_per_line_weight)}</span></div>
+            <div class="panel-head"><h2>Team Totals Used</h2><span class="pill">${appliedWeight(teamTotalLines, pred.team_total_per_line_weight)}</span></div>
             <table>
               <thead><tr><th>Team</th><th>Line</th><th>Over prob</th><th>Over raw</th><th>Under raw</th></tr></thead>
               <tbody>${teamTotalLineRows(teamTotalLines)}</tbody>
             </table>
           </section>
           <section class="panel">
-            <div class="panel-head"><h2>Spreads Used</h2><span class="pill">each ${pct(pred.spread_per_line_weight)}</span></div>
+            <div class="panel-head"><h2>Spreads Used</h2><span class="pill">${appliedWeight(spreadLines, pred.spread_per_line_weight)}</span></div>
             <table>
               <thead><tr><th>Team</th><th>Line</th><th>Cover prob</th><th>Raw</th></tr></thead>
               <tbody>${spreadLineRows(spreadLines)}</tbody>
