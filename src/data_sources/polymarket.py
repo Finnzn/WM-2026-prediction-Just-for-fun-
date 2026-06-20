@@ -170,13 +170,18 @@ def best_alias_score(team: str, text: str) -> tuple[float, str]:
     best_score = 0.0
     best_alias = ""
     text_norm = norm(text)
+    fuzzy_text = text_norm[:300]
     for alias in aliases_for_team(team):
         alias_norm = norm(alias)
         if not alias_norm:
             continue
         if re.search(rf"\b{re.escape(alias_norm)}\b", text_norm):
             return 1.0, alias
-        score = ratio(alias_norm, text_norm)
+        alias_tokens = set(alias_norm.split())
+        if alias_tokens and not alias_tokens.intersection(fuzzy_text.split()):
+            score = 0.0
+        else:
+            score = ratio(alias_norm, fuzzy_text)
         if score > best_score:
             best_score = score
             best_alias = alias
@@ -238,6 +243,8 @@ def is_full_match_total(candidate: PolymarketDebugCandidate) -> bool:
         and candidate.total_line is not None
         and "first half" not in text
         and "1st half" not in text
+        and "second half" not in text
+        and "2nd half" not in text
         and "team total" not in text
         and "corners" not in text
     )
@@ -250,9 +257,26 @@ def is_team_total(candidate: PolymarketDebugCandidate) -> bool:
         and candidate.total_line is not None
         and "first half" not in text
         and "1st half" not in text
+        and "second half" not in text
+        and "2nd half" not in text
         and "corners" not in text
         and ("team total" in text or "team goals" in text or "total goals" in text)
     )
+
+
+def _breaks_team_total_monotonicity(selected: list[dict[str, Any]], team_key: str, line: float, over_prob: float) -> bool:
+    for item in selected:
+        if bool(item.get("team_is_home")) != (team_key == "home"):
+            continue
+        existing_line = safe_float(item.get("line"))
+        existing_prob = safe_float(item.get("over_probability"))
+        if existing_line is None or existing_prob is None:
+            continue
+        if line > existing_line and over_prob > existing_prob:
+            return True
+        if line < existing_line and over_prob < existing_prob:
+            return True
+    return False
 
 
 def is_full_match_spread(candidate: PolymarketDebugCandidate) -> bool:
@@ -262,6 +286,8 @@ def is_full_match_spread(candidate: PolymarketDebugCandidate) -> bool:
         and candidate.spread_line is not None
         and "first half" not in text
         and "1st half" not in text
+        and "second half" not in text
+        and "2nd half" not in text
         and "corners" not in text
     )
 
@@ -815,12 +841,7 @@ class PolymarketClient:
         candidates = [
             candidate
             for candidate in debug.candidates
-            if candidate.accepted
-            and candidate.category == "total"
-            and candidate.total_line is not None
-            and "first half" not in norm(f"{candidate.market_question} {candidate.market_slug}")
-            and "1st half" not in norm(f"{candidate.market_question} {candidate.market_slug}")
-            and "corners" not in norm(f"{candidate.market_question} {candidate.market_slug}")
+            if candidate.accepted and is_team_total(candidate)
         ]
         if not candidates:
             return []
@@ -844,6 +865,8 @@ class PolymarketClient:
             under_prob = under.implied_probability if under else None
             if under_prob is not None:
                 over_prob, under_prob = normalize_probabilities([over_prob, under_prob])
+            if _breaks_team_total_monotonicity(selected, team_key, line, over_prob):
+                continue
             seen.add(key)
             selected.append(
                 {

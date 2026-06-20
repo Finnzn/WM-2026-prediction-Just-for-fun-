@@ -1,4 +1,9 @@
-from src.data_sources.polymarket import classify_match_market, extract_outcome_tokens, team_key_from_market_text
+from src.data_sources.polymarket import (
+    _breaks_team_total_monotonicity,
+    classify_match_market,
+    extract_outcome_tokens,
+    team_key_from_market_text,
+)
 from src.data_sources.polymarket import PolymarketClient
 from src.config import Config
 from src.markets.classifier import score_candidate
@@ -44,3 +49,9 @@ def test_polymarket_slug_candidates_include_utc_date_and_market_codes():
 def test_team_total_market_text_identifies_team():
     assert team_key_from_market_text("Mexico team total O/U 1.5", "Mexico", "South Africa") == "home"
     assert team_key_from_market_text("South Africa total goals O/U 0.5", "Mexico", "South Africa") == "away"
+
+
+def test_team_total_monotonicity_rejects_higher_line_with_higher_probability():
+    selected = [{"team_is_home": True, "line": 1.5, "over_probability": 0.355}]
+    assert _breaks_team_total_monotonicity(selected, "home", 2.5, 0.37)
+    assert not _breaks_team_total_monotonicity(selected, "home", 2.5, 0.25)
