@@ -292,7 +292,7 @@ def calibrate_weights_command(args: argparse.Namespace) -> int:
         },
         "baselines": {
             "model_only": _blend_metrics(rows, 0.0),
-            "current_live_70_market": _blend_metrics(rows, 0.7),
+            "current_live_90_market": _blend_metrics(rows, 0.9),
             "market_only": _blend_metrics(rows, 1.0),
         },
         "best_by_log_loss": best_log_loss,

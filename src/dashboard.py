@@ -392,8 +392,8 @@ INDEX_HTML = """<!doctype html>
       </label>
       <label>Weights
         <select id="weightPreset">
-          <option value="0.3,0.7" selected>Live 30 / 70</option>
-          <option value="0.4,0.6">Default 40 / 60</option>
+          <option value="0.1,0.9" selected>Live 10 / 90</option>
+          <option value="0.3,0.7">Previous 30 / 70</option>
           <option value="1,0">Model only</option>
           <option value="0,1">Market only</option>
           <option value="custom">Custom</option>

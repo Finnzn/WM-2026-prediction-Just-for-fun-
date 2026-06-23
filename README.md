@@ -42,8 +42,8 @@ The dashboard uses:
 The dashboard defaults to live weights:
 
 ```text
-30% statistical model
-70% Polymarket moneyline
+10% statistical model
+90% Polymarket moneyline
 ```
 
 You can change the weights in the dashboard before clicking predict.
@@ -63,15 +63,8 @@ For each selected scheduled match, the program:
 9. Blends win/draw/loss probabilities with the standard CLI default weights:
 
 ```text
-40% statistical model
-60% Polymarket moneyline
-```
-
-For the live dashboard moneyline blend, the default remains:
-
-```text
-30% statistical model
-70% Polymarket moneyline
+10% statistical model
+90% Polymarket moneyline
 ```
 
 The current conservative score-matrix market weights are:
