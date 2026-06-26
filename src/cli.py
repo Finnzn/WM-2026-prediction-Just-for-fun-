@@ -736,7 +736,7 @@ def build_parser() -> argparse.ArgumentParser:
     market_calibration.add_argument("--max-match-id", default="M020")
     market_calibration.add_argument("--exclude", nargs="*", default=["M001", "M002", "M008"])
     market_calibration.add_argument("--candidates", default="0,0.1,0.2,0.25,0.3,0.35,0.4")
-    market_calibration.add_argument("--moneyline-market-weight", type=float, default=0.7)
+    market_calibration.add_argument("--moneyline-market-weight", type=float, default=0.9)
     market_calibration.add_argument("--regularization-strength", type=float, default=0.25)
     market_calibration.add_argument("--shrinkage-matches", type=int, default=30)
     market_calibration.set_defaults(func=calibrate_market_weights_command)
